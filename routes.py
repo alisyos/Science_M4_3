@@ -6,6 +6,7 @@ from datetime import datetime
 from database import Base, db
 from sqlalchemy import func, case
 import os
+import time
 
 app = Flask(__name__)
 client = OpenAI(
@@ -14,47 +15,21 @@ client = OpenAI(
 
 class ScienceQuizBot:
     def __init__(self):
-        # Assistant ID를 환경변수에서 가져오기
         self.assistant_id = os.getenv('ASSISTANT_ID')
         if not self.assistant_id:
             raise ValueError("Assistant ID not found in environment variables")
-        
-    def create_thread(self):
-        try:
-            print("Creating new thread...")
-            thread = client.beta.threads.create()
-            print(f"Thread created: {thread.id}")
-            return thread
-        except Exception as e:
-            print(f"Error creating thread: {str(e)}")
-            raise e
 
-    def get_quiz(self, thread_id):
+    def get_quiz(self):
         try:
-            print(f"Getting quiz for thread {thread_id}...")
-            message = client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content="새로운 문제를 출제해주세요."
+            print("Getting quiz...")
+            # 직접 Assistant 호출
+            run = client.beta.assistants.create(
+                assistant_id=self.assistant_id,
+                instructions="새로운 문제를 출제해주세요."
             )
-            print("Message created")
-            
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=self.assistant_id
-            )
-            print("Run created")
-            
-            while run.status != 'completed':
-                run = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
             print("Run completed")
             
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            print("Messages retrieved")
-            return json.loads(messages.data[0].content[0].text.value)
+            return json.loads(run.content[0].text.value)
             
         except Exception as e:
             print(f"Error in get_quiz: {str(e)}")
@@ -82,14 +57,10 @@ def init_routes(app):
             quiz_bot = ScienceQuizBot()
             print("Quiz bot created")
             
-            thread = quiz_bot.create_thread()
-            print(f"Thread created: {thread.id}")
-            
-            quiz_data = quiz_bot.get_quiz(thread.id)
+            quiz_data = quiz_bot.get_quiz()
             print(f"Quiz data received")
             
             return jsonify({
-                'thread_id': thread.id,
                 'quiz': quiz_data
             })
         except Exception as e:
