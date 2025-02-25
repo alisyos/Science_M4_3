@@ -5,9 +5,13 @@ import random
 from datetime import datetime
 from database import Base, db
 from sqlalchemy import func, case
+import os
 
 app = Flask(__name__)
-client = OpenAI()
+client = OpenAI(
+    api_key=os.getenv('OPENAI_API_KEY'),
+    base_url="https://api.endpoints.anyscale.com/v1"  # 프로젝트용 API 엔드포인트 추가
+)
 
 class ScienceQuizBot:
     def __init__(self):
@@ -59,14 +63,24 @@ class ScienceQuizBot:
 
 @app.route('/api/quiz/new', methods=['POST'])
 def new_quiz():
-    quiz_bot = ScienceQuizBot()
-    thread = quiz_bot.create_thread()
-    quiz_data = quiz_bot.get_quiz(thread.id)
-    
-    return jsonify({
-        'thread_id': thread.id,
-        'quiz': quiz_data
-    })
+    try:
+        print("=== Starting new quiz request ===")
+        quiz_bot = ScienceQuizBot()
+        print("Quiz bot created")
+        
+        thread = quiz_bot.create_thread()
+        print(f"Thread created: {thread.id}")
+        
+        quiz_data = quiz_bot.get_quiz(thread.id)
+        print(f"Quiz data received")
+        
+        return jsonify({
+            'thread_id': thread.id,
+            'quiz': quiz_data
+        })
+    except Exception as e:
+        print(f"Error in new_quiz: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/quiz/answer', methods=['POST'])
 def submit_answer():

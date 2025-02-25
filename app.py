@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from openai import OpenAI
 import json
 import random
@@ -12,7 +12,20 @@ import os
 
 app = Flask(__name__)
 load_dotenv()
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+# API 키 확인
+api_key = os.getenv('OPENAI_API_KEY')
+if not api_key:
+    print("Error: API key not found in .env")
+    raise ValueError("OpenAI API key not found")
+else:
+    print("API key loaded successfully:", api_key[:10] + "...")
+
+# OpenAI 클라이언트 설정
+client = OpenAI(
+    api_key=api_key,
+    base_url="https://api.openai.com/v1"  # 기본 OpenAI API 엔드포인트 사용
+)
 
 init_db()
 
