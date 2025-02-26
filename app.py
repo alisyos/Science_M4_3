@@ -29,10 +29,10 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 login_manager.login_message = "이 페이지에 접근하려면 로그인이 필요합니다."
 
-# 데이터베이스 테이블 생성
+# 데이터베이스 테이블 생성 (이미 존재하는 경우 생성하지 않음)
 with app.app_context():
-    db.drop_all()  # 기존 데이터베이스 삭제
-    db.create_all()  # 새로운 데이터베이스 생성
+    # db.drop_all()  # 기존 데이터베이스 삭제 부분 제거
+    db.create_all()  # 테이블이 없는 경우에만 생성
 
 # API 키 확인
 api_key = os.getenv('OPENAI_API_KEY')
