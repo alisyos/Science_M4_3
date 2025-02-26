@@ -1,0 +1,21 @@
+.header {
+    padding: 10px 20px;
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+.login-btn, .logout-btn {
+    padding: 5px 15px;
+    border-radius: 4px;
+    text-decoration: none;
+    color: white;
+    background-color: #007bff;
+}
+
+.logout-btn {
+    background-color: #dc3545;
+    margin-left: 10px;
+} 

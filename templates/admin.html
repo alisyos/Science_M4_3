@@ -28,33 +28,74 @@
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h1>관리자 대시보드</h1>
             <div>
-                <button class="btn btn-success">데시보드</button>
-                <button class="btn btn-info text-white">계정 관리</button>
+                <button class="btn btn-success">대시보드</button>
+                <a href="{{ url_for('user_management') }}" class="btn btn-info text-white">계정 관리</a>
                 <button class="btn btn-danger">로그아웃</button>
             </div>
         </div>
 
+        <!-- 전체 통계 -->
         <div class="row mb-4">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="stats-card">
                     <h5>전체 학생 수</h5>
                     <div class="stats-number">{{ total_students }}</div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="stats-card">
                     <h5>총 문제 풀이 수</h5>
                     <div class="stats-number">{{ total_answers }}</div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="stats-card">
                     <h5>전체 정답률</h5>
                     <div class="stats-number">{{ "%.1f"|format(accuracy_rate) }}%</div>
                 </div>
             </div>
+            <div class="col-md-3">
+                <div class="stats-card">
+                    <h5>평균 학습 진도율</h5>
+                    <div class="stats-number">{{ "%.1f"|format(average_progress) }}%</div>
+                </div>
+            </div>
         </div>
 
+        <!-- 단원별 통계 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">단원별 통계</h5>
+            </div>
+            <div class="card-body">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>단원</th>
+                            <th>총 문제 수</th>
+                            <th>풀이 횟수</th>
+                            <th>정답 수</th>
+                            <th>정답률</th>
+                            <th>참여 학생 수</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for unit in unit_stats %}
+                        <tr>
+                            <td>{{ unit.name }}</td>
+                            <td>{{ unit.total_questions }}</td>
+                            <td>{{ unit.attempts }}</td>
+                            <td>{{ unit.correct }}</td>
+                            <td>{{ "%.1f"|format(unit.accuracy_rate) }}%</td>
+                            <td>{{ unit.unique_students }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 학생별 통계 -->
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">학생별 통계</h5>
@@ -65,7 +106,7 @@
                     <thead>
                         <tr>
                             <th>학생</th>
-                            <th>풀 문제 수</th>
+                            <th>풀이 문제 수</th>
                             <th>정답 수</th>
                             <th>오답 수</th>
                             <th>정답률</th>
