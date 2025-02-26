@@ -30,37 +30,29 @@ client = OpenAI(
 init_db()
 
 class ScienceQuizBot:
-    _instance = None
-    _thread_id = None  # 클래스 레벨에서 thread_id 캐싱
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
     def __init__(self):
-        if not hasattr(self, 'initialized'):
-            self.assistant_id = 'asst_ao5HoApasZzHhDRVlzTPq5za'
-            self.initialized = True
+        self.assistant_id = os.getenv('ASSISTANT_ID')
+        if not self.assistant_id:
+            raise ValueError("Assistant ID not found in environment variables")
 
-    def get_or_create_thread(self):
-        if not self._thread_id:
+    def create_thread(self):
+        try:
             thread = client.beta.threads.create()
-            self._thread_id = thread.id
-        return self._thread_id
+            return thread.id
+        except Exception as e:
+            print(f"Error creating thread: {str(e)}")
+            raise e
 
     def get_quiz(self, thread_id=None):
         try:
             if not thread_id:
-                thread_id = self.get_or_create_thread()
-
-            print("\n=== 퀴즈 요청 ===")
-            print("요청 내용: 새로운 문제를 출제해주세요.")
-            
+                thread = client.beta.threads.create()
+                thread_id = thread.id
+                
             message = client.beta.threads.messages.create(
                 thread_id=thread_id,
                 role="user",
-                content="새로운 문제를 출제해주세요."
+                content="새로운 퀴즈를 출제해주세요."
             )
             
             run = client.beta.threads.runs.create(
@@ -77,40 +69,34 @@ class ScienceQuizBot:
                     break
                 time.sleep(0.5)
             
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            response_text = messages.data[0].content[0].text.value
+            response = client.beta.threads.messages.list(thread_id=thread_id)
+            response_text = response.data[0].content[0].text.value
             
-            print("\n=== GPT 응답 ===")
+            print("\n=== 퀴즈 응답 ===")
             print(response_text)
             
-            try:
-                quiz_data = json.loads(response_text)
-                return {
-                    "thread_id": thread_id,
-                    "quiz": quiz_data["quiz"]
-                }
-            except json.JSONDecodeError:
-                print("\n=== JSON 파싱 오류 ===")
-                print(f"Response text: {response_text}")
-                return {
-                    "error": "퀴즈 데이터 형식이 올바르지 않습니다."
-                }
+            # JSON 부분만 추출
+            if '{' in response_text and '}' in response_text:
+                json_text = response_text[response_text.find('{'):response_text.rfind('}')+1]
+                result = json.loads(json_text)
+                result['thread_id'] = thread_id
+                return result
+            else:
+                raise ValueError("JSON 형식의 응답을 찾을 수 없습니다.")
             
         except Exception as e:
-            print("\n=== 오류 발생 ===")
-            print(f"Error: {str(e)}")
-            return {"error": str(e)}
+            print(f"Error in get_quiz: {str(e)}")
+            return {
+                "error": "퀴즈를 생성하는 중 오류가 발생했습니다.",
+                "details": str(e)
+            }
 
-    def check_answer(self, thread_id, answer):
+    def check_answer(self, thread_id, user_answer):
         try:
-            print("\n=== 답변 제출 ===")
-            print(f"Thread ID: {thread_id}")
-            print(f"사용자 답변: {answer}")
-            
             message = client.beta.threads.messages.create(
                 thread_id=thread_id,
                 role="user",
-                content=answer
+                content=f"사용자가 '{user_answer}'라고 답변했습니다."
             )
             
             run = client.beta.threads.runs.create(
@@ -127,35 +113,82 @@ class ScienceQuizBot:
                     break
                 time.sleep(0.5)
             
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            response_text = messages.data[0].content[0].text.value
+            response = client.beta.threads.messages.list(thread_id=thread_id)
+            response_text = response.data[0].content[0].text.value
             
-            print("\n=== GPT 답변 평가 ===")
+            print("\n=== 답변 평가 ===")
             print(response_text)
             
-            try:
-                response_data = json.loads(response_text)
-                return response_data
-            except json.JSONDecodeError:
-                print("\n=== JSON 파싱 오류 ===")
-                print(f"Response text: {response_text}")
-                return {
-                    "type": "ANSWER",
-                    "answer": {
-                        "correct": False,
-                        "explanation": "죄송합니다. 응답을 처리하는 중 오류가 발생했습니다."
-                    }
-                }
+            # JSON 부분만 추출
+            if '{' in response_text and '}' in response_text:
+                json_text = response_text[response_text.find('{'):response_text.rfind('}')+1]
+                return json.loads(json_text)
+            else:
+                raise ValueError("JSON 형식의 응답을 찾을 수 없습니다.")
             
         except Exception as e:
-            print("\n=== 오류 발생 ===")
-            print(f"Error: {str(e)}")
+            print(f"Error in check_answer: {str(e)}")
             return {
                 "type": "ANSWER",
                 "answer": {
                     "correct": False,
-                    "explanation": "죄송합니다. 답변을 확인하는 중 오류가 발생했습니다."
+                    "explanation": str(e)
                 }
+            }
+
+    def get_explanation(self, thread_id, question):
+        try:
+            message = client.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=question
+            )
+            
+            run = client.beta.threads.runs.create(
+                thread_id=thread_id,
+                assistant_id=self.assistant_id
+            )
+            
+            while True:
+                run = client.beta.threads.runs.retrieve(
+                    thread_id=thread_id,
+                    run_id=run.id
+                )
+                if run.status == 'completed':
+                    break
+                time.sleep(0.5)
+            
+            response = client.beta.threads.messages.list(thread_id=thread_id)
+            response_text = response.data[0].content[0].text.value
+            
+            print("\n=== 일반 질문 답변 ===")
+            print(response_text)
+            
+            # JSON 부분만 추출하고 파싱
+            if '{' in response_text and '}' in response_text:
+                json_text = response_text[response_text.find('{'):response_text.rfind('}')+1]
+                result = json.loads(json_text)
+                
+                # CHAT 타입 응답 처리
+                if result.get('type') == 'CHAT':
+                    return result
+                else:
+                    return {
+                        "type": "CHAT",
+                        "message": result.get('message', result.get('explanation', response_text))
+                    }
+            else:
+                # JSON이 없는 경우 텍스트 전체를 메시지로 사용
+                return {
+                    "type": "CHAT",
+                    "message": response_text
+                }
+                
+        except Exception as e:
+            print(f"Error in get_explanation: {str(e)}")
+            return {
+                "type": "CHAT",
+                "message": str(e)
             }
 
 @app.route('/')
@@ -164,10 +197,17 @@ def quiz_page():
 
 @app.route('/api/quiz/new', methods=['POST'])
 def new_quiz():
-    quiz_bot = ScienceQuizBot()
-    thread = quiz_bot.get_or_create_thread()
-    quiz_data = quiz_bot.get_quiz(thread)
-    return jsonify(quiz_data)
+    try:
+        quiz_bot = ScienceQuizBot()
+        # thread_id 없이 get_quiz 호출
+        quiz_data = quiz_bot.get_quiz()
+        return jsonify(quiz_data)
+    except Exception as e:
+        print(f"Error in new_quiz: {str(e)}")
+        return jsonify({
+            "error": "퀴즈를 생성하는 중 오류가 발생했습니다.",
+            "details": str(e)
+        }), 500
 
 @app.route('/api/quiz/answer', methods=['POST'])
 def submit_answer():

@@ -234,7 +234,15 @@
                     this.removeMessage(loadingId);
                     
                     const data = await response.json();
-                    this.appendMessage(data.response, 'text', 'assistant');
+                    
+                    // 응답 타입에 따른 처리
+                    if (data.type === "CHAT") {
+                        this.appendMessage(data.message, 'text', 'assistant');
+                    } else if (data.type === "ANSWER") {
+                        this.appendMessage(data.answer.explanation, 'text', 'assistant');
+                    } else if (data.type === "QUIZ") {
+                        this.appendMessage(data.quiz, 'quiz');
+                    }
                     
                 } catch (error) {
                     this.removeMessage(loadingId);
