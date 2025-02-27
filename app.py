@@ -476,19 +476,34 @@ def user_management():
     return render_template('user_management.html', users=users)
 
 @app.route('/admin/users/add', methods=['POST'])
+@login_required
 def add_user():
+    if current_user.username != 'admin':
+        flash('관리자 권한이 필요합니다.', 'error')
+        return redirect(url_for('admin_login'))
+        
     username = request.form.get('username')
     password = request.form.get('password')
     
+    if not username or not password:
+        flash('사용자명과 비밀번호를 모두 입력해주세요.', 'error')
+        return redirect(url_for('user_management'))
+        
     if User.query.filter_by(username=username).first():
         flash('이미 존재하는 사용자명입니다.', 'error')
         return redirect(url_for('user_management'))
-    
-    user = User(username=username, password=password)
-    db.session.add(user)
-    db.session.commit()
-    
-    flash('계정이 생성되었습니다.', 'success')
+        
+    try:
+        new_user = User(username=username)
+        new_user.set_password(password)
+        db.session.add(new_user)
+        db.session.commit()
+        flash('계정이 생성되었습니다.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash('계정 생성 중 오류가 발생했습니다.', 'error')
+        print(f"Error creating user: {str(e)}")
+        
     return redirect(url_for('user_management'))
 
 @app.route('/admin/users/edit', methods=['POST'])
