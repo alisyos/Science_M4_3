@@ -1,7 +1,10 @@
-from app import app
-from models import db, User, Answer
+from app import app, db
+from models import User, Answer
 import random
 from datetime import datetime, timedelta
+from flask import Flask
+from database import init_db
+import os
 
 def create_seed_data():
     with app.app_context():
@@ -49,5 +52,25 @@ def create_seed_data():
         db.session.commit()
         print("더미 데이터가 성공적으로 생성되었습니다.")
 
+def create_app():
+    app = Flask(__name__)
+    init_db(app)
+    return app
+
+def seed_admin():
+    app = create_app()
+    
+    with app.app_context():
+        # 관리자 계정이 없는 경우에만 생성
+        if not User.query.filter_by(username='admin').first():
+            admin = User(username='admin')
+            admin.set_password('admin123')
+            db.session.add(admin)
+            db.session.commit()
+            print("관리자 계정이 생성되었습니다.")
+        else:
+            print("관리자 계정이 이미 존재합니다.")
+
 if __name__ == "__main__":
-    create_seed_data() 
+    create_seed_data()
+    seed_admin() 
