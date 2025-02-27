@@ -41,8 +41,18 @@
 
 <!-- 단원별 통계 -->
 <div class="card mb-4">
-    <div class="card-header">
+    <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0">단원별 통계</h5>
+        <div class="d-flex align-items-center">
+            <select class="form-select me-2" id="studentSelect" onchange="updateUnitStats(this.value)">
+                <option value="">전체</option>
+                {% for student in students %}
+                <option value="{{ student.id }}" {% if selected_student_id == student.id %}selected{% endif %}>
+                    {{ student.username }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
     </div>
     <div class="card-body">
         <div class="table-responsive">
@@ -50,22 +60,24 @@
                 <thead>
                     <tr>
                         <th>단원</th>
-                        <th>총 문제 수</th>
                         <th>풀이 횟수</th>
                         <th>정답 수</th>
                         <th>정답률</th>
+                        {% if not selected_student_id %}
                         <th>참여 학생 수</th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody>
                     {% for stat in unit_stats %}
                     <tr>
                         <td>{{ stat.name }}</td>
-                        <td>{{ stat.total_questions }}</td>
                         <td>{{ stat.attempts }}</td>
                         <td>{{ stat.correct }}</td>
                         <td>{{ "%.1f"|format(stat.accuracy_rate) }}%</td>
+                        {% if not selected_student_id %}
                         <td>{{ stat.unique_students }}</td>
+                        {% endif %}
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -74,11 +86,11 @@
     </div>
 </div>
 
-<!-- 학생별 통계 -->
+<!-- 학생별 통계 (독립적으로 유지) -->
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0">학생별 통계</h5>
-        <button class="btn btn-danger" id="deleteAllBtn">전체 통계 삭제</button>
+        <button id="deleteAllBtn" class="btn btn-danger">전체 통계 삭제</button>
     </div>
     <div class="card-body">
         <div class="table-responsive">
@@ -101,21 +113,24 @@
                         <td>{{ total }}</td>
                         <td>{{ correct }}</td>
                         <td>{{ total - correct }}</td>
-                        <td>{{ "%.1f"|format(correct/total * 100 if total > 0 else 0) }}%</td>
+                        <td>{{ "%.1f"|format((correct / total * 100) if total > 0 else 0) }}%</td>
                         <td>
                             <div class="progress">
                                 <div class="progress-bar" role="progressbar" 
-                                     style="width: {{ (correct/total * 100 if total > 0 else 0)|round|int }}%"
-                                     aria-valuenow="{{ (correct/total * 100 if total > 0 else 0)|round|int }}" 
+                                     style="width: {{ (total/100 * 100)|round|int if total <= 100 else 100 }}%"
+                                     aria-valuenow="{{ (total/100 * 100)|round|int if total <= 100 else 100 }}" 
                                      aria-valuemin="0" 
                                      aria-valuemax="100">
-                                    {{ "%.1f"|format(correct/total * 100 if total > 0 else 0) }}%
+                                    {{ "%.1f"|format(total/100 * 100 if total <= 100 else 100) }}%
                                 </div>
                             </div>
                         </td>
                         <td>
-                            <button class="btn btn-danger btn-sm delete-stats" 
-                                    data-user-id="{{ user.id }}">삭제</button>
+                            <button class="btn btn-sm btn-danger delete-stats" 
+                                    data-user-id="{{ user.id }}"
+                                    data-username="{{ user.username }}">
+                                통계 삭제
+                            </button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -126,21 +141,59 @@
 </div>
 
 <script>
+function updateUnitStats(studentId) {
+    const url = new URL(window.location.href);
+    if (studentId) {
+        url.searchParams.set('student_id', studentId);
+    } else {
+        url.searchParams.delete('student_id');
+    }
+    window.location.href = url.toString();
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     // 개별 통계 삭제
     document.querySelectorAll('.delete-stats').forEach(button => {
         button.addEventListener('click', function() {
+            const userId = this.dataset.userId;
             if (confirm('이 학생의 모든 통계를 삭제하시겠습니까?')) {
-                const userId = this.dataset.userId;
-                // 여기에 삭제 API 호출 로직 추가
+                fetch(`/admin/stats/delete/${userId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                }).then(response => {
+                    if (response.ok) {
+                        location.reload();
+                    } else {
+                        alert('통계 삭제 중 오류가 발생했습니다.');
+                    }
+                }).catch(error => {
+                    console.error('Error:', error);
+                    alert('통계 삭제 중 오류가 발생했습니다.');
+                });
             }
         });
     });
 
     // 전체 통계 삭제
     document.getElementById('deleteAllBtn').addEventListener('click', function() {
-        if (confirm('모든 학생의 통계를 삭제하시겠습니까?')) {
-            // 여기에 전체 삭제 API 호출 로직 추가
+        if (confirm('모든 학생의 통계를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) {
+            fetch('/admin/stats/delete-all', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            }).then(response => {
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    alert('통계 삭제 중 오류가 발생했습니다.');
+                }
+            }).catch(error => {
+                console.error('Error:', error);
+                alert('통계 삭제 중 오류가 발생했습니다.');
+            });
         }
     });
 });
