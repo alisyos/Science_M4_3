@@ -17,7 +17,16 @@ app = Flask(__name__)
 load_dotenv()
 
 # Flask 설정
-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'your-secret-key-here')  # 환경 변수에서 가져오거나 기본값 사용
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev')
+
+# PostgreSQL 설정
+if os.environ.get('DATABASE_URL'):
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
+else:
+    # 로컬 개발용 SQLite
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///instance/quiz.db'
+
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Flask-Login 설정
 login_manager = LoginManager()
@@ -27,6 +36,8 @@ login_manager.login_message = "이 페이지에 접근하려면 로그인이 필
 
 # 데이터베이스 초기화
 init_db(app)
+with app.app_context():
+    db.create_all()
 
 # API 키 확인
 api_key = os.getenv('OPENAI_API_KEY')
