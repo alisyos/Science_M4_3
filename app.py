@@ -17,14 +17,17 @@ app = Flask(__name__)
 load_dotenv()
 
 # Flask 설정
-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev')
+app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'dev')
 
 # PostgreSQL 설정
 if os.environ.get('DATABASE_URL'):
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
+    database_url = os.environ.get('DATABASE_URL')
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 else:
     # 로컬 개발용 SQLite
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///instance/quiz.db'
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///quiz.db'
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -38,6 +41,12 @@ login_manager.login_message = "이 페이지에 접근하려면 로그인이 필
 init_db(app)
 with app.app_context():
     db.create_all()
+    # 관리자 계정이 없는 경우 생성
+    if not User.query.filter_by(username='admin').first():
+        admin = User(username='admin')
+        admin.set_password('admin123')
+        db.session.add(admin)
+        db.session.commit()
 
 # API 키 확인
 api_key = os.getenv('OPENAI_API_KEY')
