@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 import os
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_login import UserMixin
-from database import init_db
 
 app = Flask(__name__)
 load_dotenv()
@@ -38,7 +37,9 @@ login_manager.login_view = 'login'
 login_manager.login_message = "이 페이지에 접근하려면 로그인이 필요합니다."
 
 # 데이터베이스 초기화
-init_db(app)
+db.init_app(app)
+
+# 앱 컨텍스트 내에서 데이터베이스 생성
 with app.app_context():
     db.create_all()
     # 관리자 계정이 없는 경우 생성
@@ -590,5 +591,4 @@ def delete_all_stats():
         return jsonify({'error': '통계 삭제 중 오류가 발생했습니다.'}), 500
 
 if __name__ == '__main__':
-    app.debug = True
-    app.run()
+    app.run(debug=True)
