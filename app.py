@@ -52,6 +52,8 @@ def load_user(user_id):
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
+        if current_user.username == 'admin':
+            return redirect(url_for('admin_dashboard'))
         return redirect(url_for('quiz_page'))
     
     if request.method == 'POST':
@@ -59,9 +61,13 @@ def login():
         password = request.form.get('password')
         
         user = User.query.filter_by(username=username).first()
-        if user and password == user.password:  # 실제 서비스에서는 비밀번호 해시를 비교해야 함
+        
+        # 비밀번호 검증 로직 수정
+        if user and user.check_password(password):  # check_password 메소드 사용
             login_user(user)
             next_page = request.args.get('next')
+            if user.username == 'admin':
+                return redirect(next_page or url_for('admin_dashboard'))
             return redirect(next_page or url_for('quiz_page'))
         else:
             flash('아이디 또는 비밀번호가 올바르지 않습니다.', 'error')
@@ -335,7 +341,12 @@ def chat():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/admin')
+@login_required  # 로그인 필수
 def admin_dashboard():
+    if not current_user.username == 'admin':  # admin 계정만 접근 가능
+        flash('관리자 권한이 필요합니다.', 'error')
+        return redirect(url_for('login'))
+        
     total_students = User.query.count()
     total_answers = Answer.query.count()
     correct_answers = Answer.query.filter_by(is_correct=True).count()
@@ -402,7 +413,12 @@ def logout():
     return redirect(url_for('login'))
 
 @app.route('/admin/users')
+@login_required  # 로그인 필수
 def user_management():
+    if not current_user.username == 'admin':  # admin 계정만 접근 가능
+        flash('관리자 권한이 필요합니다.', 'error')
+        return redirect(url_for('login'))
+        
     users = User.query.all()
     return render_template('user_management.html', users=users)
 

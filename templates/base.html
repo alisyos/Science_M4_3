@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>과학 퀴즈 관리자</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Custom CSS -->
+    <style>
+        #sidebar {
+            min-height: 100vh;
+            background-color: #f8f9fa;
+            border-right: 1px solid #dee2e6;
+        }
+        #sidebar .nav-link {
+            color: #333;
+            padding: 0.5rem 1rem;
+        }
+        #sidebar .nav-link.active {
+            background-color: #0d6efd;
+            color: white;
+        }
+        #sidebar .nav-link:hover {
+            background-color: #e9ecef;
+        }
+        #sidebar .nav-link.active:hover {
+            background-color: #0b5ed7;
+        }
+        .main-content {
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- 사이드바 -->
+            <div class="col-md-2 px-0" id="sidebar">
+                <div class="p-3 bg-primary text-white">
+                    <h5 class="mb-0">과학 퀴즈 관리자</h5>
+                </div>
+                <nav class="nav flex-column mt-3">
+                    <a class="nav-link {% if request.endpoint == 'admin_dashboard' %}active{% endif %}" 
+                       href="{{ url_for('admin_dashboard') }}">
+                        대시보드
+                    </a>
+                    <a class="nav-link {% if request.endpoint == 'user_management' %}active{% endif %}" 
+                       href="{{ url_for('user_management') }}">
+                        계정 관리
+                    </a>
+                    <a class="nav-link text-danger" href="{{ url_for('logout') }}">로그아웃</a>
+                </nav>
+            </div>
+
+            <!-- 메인 컨텐츠 -->
+            <div class="col-md-10 main-content">
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for category, message in messages %}
+                            <div class="alert alert-{{ category if category != 'message' else 'info' }} alert-dismissible fade show" role="alert">
+                                {{ message }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+
+                {% block content %}{% endblock %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Custom JS -->
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html> 
