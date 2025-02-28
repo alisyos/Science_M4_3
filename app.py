@@ -12,8 +12,12 @@ import os
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_login import UserMixin
 
-app = Flask(__name__)
+# 환경 변수 로드
 load_dotenv()
+
+# Flask 앱 설정
+app = Flask(__name__)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 # Flask 설정
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'dev')
@@ -65,6 +69,197 @@ client = OpenAI(
 
 # 전역 변수로 current_quiz 저장
 current_quiz_store = {}
+
+# ScienceQuizBot 클래스 정의
+class ScienceQuizBot:
+    def __init__(self):
+        self.assistant_id = os.getenv('ASSISTANT_ID')
+        self.current_quiz = None
+        if not self.assistant_id:
+            raise ValueError("Assistant ID not found in environment variables")
+
+    def get_quiz(self, thread_id):
+        try:
+            # 명확한 퀴즈 생성 요청
+            client.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content="새로운 과학 퀴즈를 생성해주세요. 반드시 QUIZ 타입으로 응답해주세요."
+            )
+            
+            run = client.beta.threads.runs.create(
+                thread_id=thread_id,
+                assistant_id=self.assistant_id
+            )
+            
+            while True:
+                run_status = client.beta.threads.runs.retrieve(
+                    thread_id=thread_id,
+                    run_id=run.id
+                )
+                if run_status.status == 'completed':
+                    break
+                time.sleep(1)
+            
+            messages = client.beta.threads.messages.list(thread_id=thread_id)
+            response_text = messages.data[0].content[0].text.value
+            
+            # 마크다운 코드 블록 제거
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:].strip()
+            
+            print(f"Cleaned response text: {response_text}")
+            
+            try:
+                response = json.loads(response_text)
+                if response.get('type') == 'QUIZ' and 'quiz' in response:
+                    self.current_quiz = response.get('quiz')
+                    return response
+                else:
+                    # 퀴즈 형식이 아닌 경우 재시도
+                    return self.get_quiz(thread_id)
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error: {e}")
+                print(f"Response text: {response_text}")
+                # JSON 파싱 실패 시 재시도
+                return self.get_quiz(thread_id)
+            
+        except Exception as e:
+            print(f"Error getting quiz: {str(e)}")
+            return {
+                'type': 'ERROR',
+                'message': '퀴즈를 가져오는 중 오류가 발생했습니다.'
+            }
+
+    def check_answer(self, message, thread_id):
+        try:
+            client.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=message
+            )
+            
+            run = client.beta.threads.runs.create(
+                thread_id=thread_id,
+                assistant_id=self.assistant_id
+            )
+            
+            while True:
+                run_status = client.beta.threads.runs.retrieve(
+                    thread_id=thread_id,
+                    run_id=run.id
+                )
+                if run_status.status == 'completed':
+                    break
+                time.sleep(1)
+            
+            messages = client.beta.threads.messages.list(thread_id=thread_id)
+            response_text = messages.data[0].content[0].text.value
+            
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:].strip()
+            
+            print(f"Cleaned response text: {response_text}")
+            
+            try:
+                response = json.loads(response_text)
+                
+                # ANSWER 타입 응답 처리 및 DB 저장
+                if response.get('type') == 'ANSWER':
+                    # 현재 퀴즈 정보 가져오기
+                    current_quiz = current_quiz_store.get(thread_id)
+                    if current_quiz and current_user.is_authenticated:
+                        # DB에 답변 저장
+                        answer = Answer(
+                            user_id=current_user.id,
+                            unit=current_quiz.get('unit', ''),
+                            question=current_quiz.get('question', ''),
+                            user_answer=message,
+                            is_correct=response['answer'].get('correct', False),
+                            timestamp=datetime.utcnow()
+                        )
+                        db.session.add(answer)
+                        db.session.commit()
+                        
+                        print("=== 답변 저장 완료 ===")
+                        print(f"단원: {current_quiz.get('unit')}")
+                        print(f"정답여부: {response['answer'].get('correct')}")
+                    
+                    return response
+                
+                # QUIZ 타입 응답 처리
+                elif response.get('type') == 'QUIZ':
+                    current_quiz_store[thread_id] = response.get('quiz')
+                    return response
+                
+                # CHAT 타입을 ANSWER 형식으로 변환
+                elif response.get('type') == 'CHAT':
+                    return {
+                        'type': 'ANSWER',
+                        'answer': {
+                            'correct': None,
+                            'explanation': response.get('message', '')
+                        }
+                    }
+                else:
+                    raise ValueError("Invalid response format")
+                
+            except json.JSONDecodeError as e:
+                return {
+                    'type': 'ANSWER',
+                    'answer': {
+                        'correct': None,
+                        'explanation': response_text
+                    }
+                }
+            
+        except Exception as e:
+            print(f"Error checking answer: {str(e)}")
+            return {
+                'type': 'ERROR',
+                'message': '답변 체크 중 오류가 발생했습니다.'
+            }
+
+    def get_chat_response(self, message, thread_id):
+        try:
+            client.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=message
+            )
+            
+            run = client.beta.threads.runs.create(
+                thread_id=thread_id,
+                assistant_id=self.assistant_id
+            )
+            
+            while True:
+                run_status = client.beta.threads.runs.retrieve(
+                    thread_id=thread_id,
+                    run_id=run.id
+                )
+                if run_status.status == 'completed':
+                    break
+                time.sleep(1)
+            
+            messages = client.beta.threads.messages.list(thread_id=thread_id)
+            response = messages.data[0].content[0].text.value
+            
+            return json.loads(response)
+            
+        except Exception as e:
+            print(f"Error getting chat response: {str(e)}")
+            return {
+                'type': 'ERROR',
+                'message': '응답 처리 중 오류가 발생했습니다.'
+            }
+
+# ScienceQuizBot 인스턴스 생성
+quiz_bot = ScienceQuizBot()
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -120,187 +315,45 @@ def admin_login():
     
     return render_template('admin_login.html')
 
-class ScienceQuizBot:
-    def __init__(self):
-        self.assistant_id = os.getenv('ASSISTANT_ID')
-        self.current_quiz = None  # 현재 퀴즈 정보 저장
-        if not self.assistant_id:
-            raise ValueError("Assistant ID not found in environment variables")
-
-    def create_thread(self):
-        try:
-            thread = client.beta.threads.create()
-            return thread.id
-        except Exception as e:
-            print(f"Error creating thread: {str(e)}")
-            raise e
-
-    def get_quiz(self, thread_id=None):
-        try:
-            if not thread_id:
-                thread = client.beta.threads.create()
-                thread_id = thread.id
-                
-            message = client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content="새로운 퀴즈를 출제해주세요."
-            )
-            
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=self.assistant_id
-            )
-            
-            while True:
-                run = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
-                if run.status == 'completed':
-                    break
-                time.sleep(0.5)
-            
-            response = client.beta.threads.messages.list(thread_id=thread_id)
-            response_text = response.data[0].content[0].text.value
-            
-            print("\n=== 퀴즈 응답 ===")
-            print(response_text)
-            
-            if '{' in response_text and '}' in response_text:
-                json_text = response_text[response_text.find('{'):response_text.rfind('}')+1]
-                result = json.loads(json_text)
-                result['thread_id'] = thread_id
-                if result.get('type') == 'QUIZ':
-                    self.current_quiz = result.get('quiz')  # 퀴즈 정보 저장
-                return result
-            else:
-                raise ValueError("JSON 형식의 응답을 찾을 수 없습니다.")
-            
-        except Exception as e:
-            print(f"Error in get_quiz: {str(e)}")
-            return {
-                "error": "퀴즈를 생성하는 중 오류가 발생했습니다.",
-                "details": str(e)
-            }
-
-    def check_answer(self, thread_id, user_answer):
-        message = client.beta.threads.messages.create(
-            thread_id=thread_id,
-            role="user",
-            content=f"정답은 {user_answer}입니다."
-        )
-        
-        run = client.beta.threads.runs.create(
-            thread_id=thread_id,
-            assistant_id=self.assistant_id
-        )
-        
-        while True:
-            run = client.beta.threads.runs.retrieve(
-                thread_id=thread_id,
-                run_id=run.id
-            )
-            if run.status == 'completed':
-                break
-            time.sleep(0.5)
-        
-        response = client.beta.threads.messages.list(thread_id=thread_id)
-        response_text = response.data[0].content[0].text.value
-        
-        print("\n=== 답변 평가 ===")
-        print(response_text)
-        
-        if '{' in response_text and '}' in response_text:
-            json_text = response_text[response_text.find('{'):response_text.rfind('}')+1]
-            result = json.loads(json_text)
-            
-            # 현재 퀴즈 정보 추가
-            if result.get('type') == 'ANSWER':
-                result['quiz'] = self.current_quiz
-            return result
-        else:
-            raise ValueError("JSON 형식의 응답을 찾을 수 없습니다.")
-
-    def get_explanation(self, thread_id, question):
-        try:
-            message = client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content=question
-            )
-            
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=self.assistant_id
-            )
-            
-            while True:
-                run = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
-                if run.status == 'completed':
-                    break
-                time.sleep(0.5)
-            
-            response = client.beta.threads.messages.list(thread_id=thread_id)
-            response_text = response.data[0].content[0].text.value
-            
-            print("\n=== 일반 질문 답변 ===")
-            print(response_text)
-            
-            # JSON 부분만 추출하고 파싱
-            if '{' in response_text and '}' in response_text:
-                json_text = response_text[response_text.find('{'):response_text.rfind('}')+1]
-                result = json.loads(json_text)
-                
-                # CHAT 타입 응답 처리
-                if result.get('type') == 'CHAT':
-                    return result
-                else:
-                    return {
-                        "type": "CHAT",
-                        "message": result.get('message', result.get('explanation', response_text))
-                    }
-            else:
-                # JSON이 없는 경우 텍스트 전체를 메시지로 사용
-                return {
-                    "type": "CHAT",
-                    "message": response_text
-                }
-                
-        except Exception as e:
-            print(f"Error in get_explanation: {str(e)}")
-            return {
-                "type": "CHAT",
-                "message": str(e)
-            }
-
 @app.route('/')
 @login_required
 def quiz_page():
     return render_template('quiz.html')
 
 @app.route('/api/quiz/new', methods=['POST'])
+@login_required
 def new_quiz():
     try:
-        quiz_bot = ScienceQuizBot()
-        # thread_id 없이 get_quiz 호출
-        quiz_data = quiz_bot.get_quiz()
+        # 새로운 thread 생성
+        thread = client.beta.threads.create()
+        thread_id = thread.id
         
-        # 퀴즈 정보를 전역 저장소에 저장
-        if quiz_data.get('type') == 'QUIZ':
-            thread_id = quiz_data.get('thread_id')
-            current_quiz_store[thread_id] = quiz_data.get('quiz')
-            print(f"\n=== 퀴즈 정보 저장 ===\n스레드: {thread_id}\n퀴즈: {quiz_data.get('quiz')}")
+        print("=== 퀴즈 응답 ===")
+        response = quiz_bot.get_quiz(thread_id)
+        
+        if response.get('type') == 'QUIZ':
+            print(json.dumps(response, indent=4, ensure_ascii=False))
+            quiz = response.get('quiz')
             
-        return jsonify(quiz_data)
+            # 현재 퀴즈 정보 저장
+            current_quiz_store[thread_id] = quiz
+            
+            print("=== 퀴즈 정보 저장 ===")
+            print(f"스레드: {thread_id}")
+            print(f"퀴즈: {quiz}")
+            
+            # thread_id를 응답에 포함
+            response['thread_id'] = thread_id
+            
+            return jsonify(response)
+        else:
+            raise ValueError("Invalid quiz format")
+            
     except Exception as e:
         print(f"Error in new_quiz: {str(e)}")
         return jsonify({
-            "error": "퀴즈를 생성하는 중 오류가 발생했습니다.",
-            "details": str(e)
+            'type': 'ERROR',
+            'message': '퀴즈를 생성하는 중 오류가 발생했습니다.'
         }), 500
 
 @app.route('/api/quiz/answer', methods=['POST'])
@@ -310,7 +363,7 @@ def submit_answer():
     answer = data.get('answer')
     
     quiz_bot = ScienceQuizBot()
-    result = quiz_bot.check_answer(thread_id, answer)
+    result = quiz_bot.check_answer(answer, thread_id)
     
     return jsonify(result)
 
@@ -319,72 +372,50 @@ def submit_answer():
 def chat():
     try:
         data = request.get_json()
+        message = data.get('message', '').strip()
         thread_id = data.get('thread_id')
-        message = data.get('message')
         
-        print(f"\n=== 받은 메시지 ===\n{message}")
+        print("=== 받은 메시지 ===")
+        print(message)
+        print(f"Thread ID: {thread_id}")  # thread_id 로깅 추가
         
-        if not thread_id or not message:
-            return jsonify({"error": "thread_id와 message는 필수입니다."}), 400
-            
-        quiz_bot = ScienceQuizBot()
-        
-        # "테스트 시작" 메시지 처리
-        if message.strip() == "테스트 시작":
-            result = quiz_bot.get_quiz(thread_id)
-            if result.get('type') == 'QUIZ':
-                # 퀴즈 정보를 전역 저장소에 저장
-                current_quiz_store[thread_id] = result.get('quiz')
-            print(f"\n=== 새 퀴즈 생성 ===\n{result}")
-            return jsonify(result)
-        
-        # 답변 체크 (선택지 입력)
-        answer_options = ["①", "②", "③", "④", "⑤", "1", "2", "3", "4", "5"]
-        stripped_message = message.strip()
-        
-        # 답변에서 숫자만 추출
-        if any(opt in stripped_message for opt in answer_options):
-            print("\n=== 답변 체크 시작 ===")
-            result = quiz_bot.check_answer(thread_id, stripped_message)
-            print(f"\n=== 답변 결과 ===\n{result}")
-            
-            try:
-                # 저장된 퀴즈 정보 가져오기
-                current_quiz = current_quiz_store.get(thread_id, {})
-                print(f"\n=== 현재 퀴즈 정보 ===\n스레드: {thread_id}\n퀴즈: {current_quiz}")
-                
-                # 답변 저장
-                answer = Answer(
-                    user_id=current_user.id,
-                    unit=current_quiz.get('unit', '미분류'),
-                    question=current_quiz.get('question', ''),
-                    user_answer=stripped_message,
-                    is_correct=result.get('answer', {}).get('correct', False)
-                )
-                db.session.add(answer)
-                db.session.commit()
-                print(f"\n=== 답변 저장 완료 ===\n단원: {answer.unit}\n정답여부: {answer.is_correct}")
-                
-            except Exception as e:
-                print(f"\n=== 답변 저장 실패 ===\n{str(e)}")
-                db.session.rollback()
-            
+        if not thread_id:
             return jsonify({
-                "type": "ANSWER",
-                "answer": {
-                    "correct": result.get('answer', {}).get('correct', False),
-                    "explanation": result.get('answer', {}).get('explanation', '답변을 확인할 수 없습니다.')
-                }
-            })
+                'type': 'ERROR',
+                'message': '유효하지 않은 세션입니다.'
+            }), 400
         
-        # 일반 질문 처리
-        print("\n=== 일반 질문 처리 ===")
-        result = quiz_bot.get_explanation(thread_id, message)
-        return jsonify(result)
+        # 현재 진행 중인 퀴즈가 있는지 확인
+        current_quiz = current_quiz_store.get(thread_id)
+        
+        if current_quiz:
+            print("=== 답변 체크 시작 ===")
+            response = quiz_bot.check_answer(message, thread_id)
+        else:
+            print("=== 일반 질문 처리 ===")
+            response = quiz_bot.get_chat_response(message, thread_id)
+            
+            if response.get('type') == 'CHAT':
+                explanation = response.get('message', '')
+                response = {
+                    'type': 'ANSWER',
+                    'answer': {
+                        'correct': None,
+                        'explanation': explanation
+                    }
+                }
+        
+        print("=== 답변 결과 ===")
+        print(response)
+        
+        return jsonify(response)
         
     except Exception as e:
-        print(f"\n=== 오류 발생 ===\n{str(e)}")
-        return jsonify({"error": str(e)}), 500
+        print(f"Error in chat: {str(e)}")
+        return jsonify({
+            'type': 'ERROR',
+            'message': '죄송합니다. 오류가 발생했습니다.'
+        })
 
 @app.route('/admin')
 @login_required
@@ -548,12 +579,29 @@ def edit_user():
     return redirect(url_for('user_management'))
 
 @app.route('/admin/users/delete/<int:user_id>', methods=['POST'])
+@login_required
 def delete_user(user_id):
-    user = User.query.get_or_404(user_id)
-    db.session.delete(user)
-    db.session.commit()
+    if current_user.username != 'admin':
+        flash('관리자 권한이 필요합니다.', 'error')
+        return redirect(url_for('admin_login'))
     
-    flash('계정이 삭제되었습니다.', 'success')
+    try:
+        user = User.query.get_or_404(user_id)
+        if user.username == 'admin':
+            flash('관리자 계정은 삭제할 수 없습니다.', 'error')
+            return redirect(url_for('user_management'))
+            
+        # 사용자의 답변 기록도 함께 삭제
+        Answer.query.filter_by(user_id=user_id).delete()
+        db.session.delete(user)
+        db.session.commit()
+        
+        flash('계정이 삭제되었습니다.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash('계정 삭제 중 오류가 발생했습니다.', 'error')
+        print(f"Error deleting user: {str(e)}")
+    
     return redirect(url_for('user_management'))
 
 @app.route('/admin/stats/delete/<int:user_id>', methods=['POST'])

@@ -188,6 +188,9 @@
 
         // 채팅 관리자 객체
         const chatManager = {
+            // thread_id를 클래스 속성으로 추가
+            threadId: null,
+
             async init() {
                 this.appendMessage('안녕하세요! 중학교 과학 학습 도우미입니다.', 'text', 'assistant');
                 
@@ -225,7 +228,8 @@
                         return;
                     }
                     
-                    currentThreadId = data.thread_id;
+                    // thread_id 저장
+                    this.threadId = data.thread_id;
                     this.appendMessage(data.quiz, 'quiz');
                     
                 } catch (error) {
@@ -259,7 +263,7 @@
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
-                            thread_id: currentThreadId,
+                            thread_id: this.threadId,
                             message: message
                         })
                     });
@@ -302,7 +306,7 @@
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
-                            thread_id: currentThreadId,
+                            thread_id: this.threadId,
                             message: answer
                         })
                     });
