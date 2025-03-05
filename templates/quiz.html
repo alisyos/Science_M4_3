@@ -188,7 +188,20 @@
         // 전역 변수 선언
         let currentThreadId = null;
         let isInitialized = false;
-        const currentUser = '{{ current_user.username }}';  // Jinja 템플릿에서 현재 사용자 이름 가져오기
+        const currentUser = '{{ current_user.username }}';  // 현재 사용자
+
+        // 로그아웃 전 데이터 저장을 위한 이벤트 리스너
+        window.addEventListener('beforeunload', () => {
+            if (currentUser) {
+                const messagesContainer = document.getElementById('chat-messages');
+                if (messagesContainer && messagesContainer.innerHTML) {
+                    localStorage.setItem(`chatMessages_${currentUser}`, messagesContainer.innerHTML);
+                    if (chatManager.threadId) {
+                        localStorage.setItem(`threadId_${currentUser}`, chatManager.threadId);
+                    }
+                }
+            }
+        });
 
         // 채팅 관리자 객체
         const chatManager = {
@@ -200,45 +213,92 @@
                 const savedMessages = localStorage.getItem(`chatMessages_${currentUser}`);
                 const savedThreadId = localStorage.getItem(`threadId_${currentUser}`);
                 
-                if (savedMessages && savedThreadId) {
+                if (savedMessages && savedThreadId && currentUser) {
                     const messagesContainer = document.getElementById('chat-messages');
                     messagesContainer.innerHTML = savedMessages;
                     this.threadId = savedThreadId;
                     isInitialized = true;
-                } else {
-                    this.appendMessage('안녕하세요! 중학교 과학 학습 도우미입니다.', 'text', 'assistant');
                     
-                    const messagesContainer = document.getElementById('chat-messages');
-                    const buttonDiv = document.createElement('div');
-                    buttonDiv.className = 'message assistant';
-                    buttonDiv.innerHTML = `
-                        <div class="message-content">
-                            <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('테스트 시작')">테스트 시작</button>
-                            <button class="btn btn-secondary" onclick="chatManager.endQuiz()">나중에 하기</button>
-                        </div>
-                    `;
-                    messagesContainer.appendChild(buttonDiv);
-                    isInitialized = true;
+                    // 스크롤을 최하단으로 이동
+                    requestAnimationFrame(() => {
+                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                    });
+                } else if (!currentUser) {
+                    // 로그인하지 않은 경우 마지막 사용자의 대화 내용 표시
+                    const lastUser = localStorage.getItem('lastUser');
+                    const lastMessages = localStorage.getItem(`chatMessages_${lastUser}`);
+                    const lastThreadId = localStorage.getItem(`threadId_${lastUser}`);
+                    
+                    if (lastMessages && lastThreadId) {
+                        const messagesContainer = document.getElementById('chat-messages');
+                        messagesContainer.innerHTML = lastMessages;
+                        this.threadId = lastThreadId;
+                        isInitialized = true;
+                        
+                        requestAnimationFrame(() => {
+                            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                        });
+                    } else {
+                        this.initializeNewChat();
+                    }
+                } else {
+                    this.initializeNewChat();
                 }
+            },
+
+            initializeNewChat() {
+                this.appendMessage('안녕하세요! 중학교 과학 학습 도우미입니다.', 'text', 'assistant');
+                
+                const messagesContainer = document.getElementById('chat-messages');
+                const buttonDiv = document.createElement('div');
+                buttonDiv.className = 'message assistant';
+                buttonDiv.innerHTML = `
+                    <div class="message-content">
+                        <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('1문제 출제')">1문제 출제</button>
+                        <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('5문제 출제')">5문제 출제</button>
+                        <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('10문제 출제')">10문제 출제</button>
+                        <button class="btn btn-secondary" onclick="chatManager.endQuiz()">나중에 하기</button>
+                    </div>
+                `;
+                messagesContainer.appendChild(buttonDiv);
+                isInitialized = true;
+                
+                // 초기 상태 저장
+                this.saveMessages();
             },
 
             // 메시지 저장 함수 수정
             saveMessages() {
-                const messagesContainer = document.getElementById('chat-messages');
-                localStorage.setItem(`chatMessages_${currentUser}`, messagesContainer.innerHTML);
-                if (this.threadId) {
-                    localStorage.setItem(`threadId_${currentUser}`, this.threadId);
+                try {
+                    const messagesContainer = document.getElementById('chat-messages');
+                    if (messagesContainer && messagesContainer.innerHTML && currentUser) {
+                        localStorage.setItem(`chatMessages_${currentUser}`, messagesContainer.innerHTML);
+                        if (this.threadId) {
+                            localStorage.setItem(`threadId_${currentUser}`, this.threadId);
+                        }
+                        // 마지막 사용자 정보 저장
+                        localStorage.setItem('lastUser', currentUser);
+                    }
+                } catch (error) {
+                    console.error('Error saving messages:', error);
                 }
             },
 
             // 대화 초기화 함수 수정
             resetChat() {
-                localStorage.removeItem(`chatMessages_${currentUser}`);
-                localStorage.removeItem(`threadId_${currentUser}`);
-                const messagesContainer = document.getElementById('chat-messages');
-                messagesContainer.innerHTML = '';
-                this.threadId = null;
-                this.init();
+                try {
+                    if (currentUser) {
+                        localStorage.removeItem(`chatMessages_${currentUser}`);
+                        localStorage.removeItem(`threadId_${currentUser}`);
+                    }
+                    const messagesContainer = document.getElementById('chat-messages');
+                    messagesContainer.innerHTML = '';
+                    this.threadId = null;
+                    this.initializeNewChat();
+                } catch (error) {
+                    console.error('Error resetting chat:', error);
+                    alert('대화 초기화 중 오류가 발생했습니다.');
+                }
             },
 
             async startQuiz(buttonText = '테스트 시작') {
@@ -252,8 +312,36 @@
                     
                     const loadingId = this.appendLoadingMessage();
 
-                    const response = await fetch('/api/quiz/new', { method: 'POST' });
+                    // thread_id가 없는 경우 새로운 thread 생성
+                    if (!this.threadId) {
+                        const threadResponse = await fetch('/api/quiz/new', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                message: 'init'
+                            })
+                        });
+                        const threadData = await threadResponse.json();
+                        if (threadData.thread_id) {
+                            this.threadId = threadData.thread_id;
+                        }
+                    }
+
+                    const response = await fetch('/api/chat', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            thread_id: this.threadId,
+                            message: buttonText
+                        })
+                    });
+                    
                     const data = await response.json();
+                    console.log('서버 응답:', data);
                     
                     this.removeMessage(loadingId);
                     
@@ -262,12 +350,145 @@
                         return;
                     }
                     
-                    // thread_id 저장
-                    this.threadId = data.thread_id;
-                    this.appendMessage(data.quiz, 'quiz');
-                    
+                    if (data.type === 'QUIZ') {
+                        const messagesContainer = document.getElementById('chat-messages');
+                        const quizDiv = document.createElement('div');
+                        quizDiv.className = 'message assistant';
+                        
+                        // 현재 문제와 총 문제 수 설정
+                        const currentQuestion = data.progress ? data.progress.current : (data.current_question + 1);
+                        const totalQuestions = data.progress ? data.progress.total : data.total_questions;
+                        const quiz = data.quiz || (data.questions && data.questions[0]);
+                        
+                        if (!quiz) {
+                            console.error('퀴즈 데이터 형식 오류:', data);
+                            this.appendMessage('퀴즈 데이터 형식이 올바르지 않습니다.', 'text', 'assistant');
+                            return;
+                        }
+                        
+                        let quizHTML = '<div class="quiz-message">';
+                        quizHTML += `
+                            <div class="mb-4 p-3" style="border: 1px solid #dee2e6; border-radius: 10px;">
+                                <div class="badge bg-secondary mb-2">${currentQuestion}/${totalQuestions}번 문제</div>
+                                <div class="badge bg-primary ms-2">${quiz.unit}</div>
+                                <div class="mt-2 mb-3">${quiz.question}</div>
+                                <div class="quiz-options" style="display: grid; gap: 0.3rem; margin-top: 0.5rem;">
+                                    ${quiz.options.map((option, optionIndex) => `
+                                        <div class="option-item" 
+                                             style="cursor: pointer; padding: 8px; margin: 2px 0; border: 1px solid #dee2e6; border-radius: 8px; background-color: white; transition: all 0.2s;"
+                                             onmouseover="this.style.backgroundColor='#e9ecef'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'"
+                                             onmouseout="this.style.backgroundColor='white'; this.style.boxShadow='none'"
+                                             onclick="chatManager.submitAnswer(${currentQuestion}, '${option}')">
+                                            ${option}
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `;
+                        
+                        quizHTML += `</div>`;
+                        
+                        quizDiv.innerHTML = quizHTML;
+                        messagesContainer.appendChild(quizDiv);
+                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                    }
                 } catch (error) {
+                    console.error('Error starting quiz:', error);
                     this.appendMessage('퀴즈를 시작하는 중 오류가 발생했습니다.', 'text', 'assistant');
+                }
+            },
+
+            async submitAnswer(questionNumber, selectedAnswer) {
+                try {
+                    const loadingId = this.appendLoadingMessage();
+
+                    const response = await fetch('/api/chat', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            thread_id: this.threadId,
+                            message: selectedAnswer
+                        })
+                    });
+
+                    this.removeMessage(loadingId);
+                    
+                    const data = await response.json();
+                    
+                    if (data.type === 'ANSWER') {
+                        const resultHTML = `
+                            <div class="message assistant">
+                                <div class="message-content">
+                                    <div class="alert ${data.answer.correct ? 'alert-success' : 'alert-danger'} mb-2">
+                                        ${data.answer.correct ? '정답입니다! 👏' : '아쉽네요, 오답입니다. 😢'}
+                                    </div>
+                                    <div class="mt-2">${data.answer.explanation}</div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        document.getElementById('chat-messages').insertAdjacentHTML('beforeend', resultHTML);
+                        
+                        // 다음 문제가 있는 경우
+                        if (data.next_question) {
+                            setTimeout(() => {
+                                const quizDiv = document.createElement('div');
+                                quizDiv.className = 'message assistant';
+                                
+                                let quizHTML = '<div class="quiz-message">';
+                                quizHTML += `
+                                    <div class="mb-4 p-3" style="border: 1px solid #dee2e6; border-radius: 10px;">
+                                        <div class="badge bg-secondary mb-2">${data.next_question.progress.current}/${data.next_question.progress.total}번 문제</div>
+                                        <div class="badge bg-primary ms-2">${data.next_question.quiz.unit}</div>
+                                        <div class="mt-2 mb-3">${data.next_question.quiz.question}</div>
+                                        <div class="quiz-options" style="display: grid; gap: 0.3rem; margin-top: 0.5rem;">
+                                            ${data.next_question.quiz.options.map((option, optionIndex) => `
+                                                <div class="option-item" 
+                                                     style="cursor: pointer; padding: 8px; margin: 2px 0; border: 1px solid #dee2e6; border-radius: 8px; background-color: white; transition: all 0.2s;"
+                                                     onmouseover="this.style.backgroundColor='#e9ecef'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'"
+                                                     onmouseout="this.style.backgroundColor='white'; this.style.boxShadow='none'"
+                                                     onclick="chatManager.submitAnswer(${data.next_question.progress.current}, '${option}')">
+                                                    ${option}
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    </div>
+                                </div>`;
+                                
+                                quizDiv.innerHTML = quizHTML;
+                                document.getElementById('chat-messages').appendChild(quizDiv);
+                                document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight;
+                            }, 1000);
+                        } else {
+                            // 모든 문제가 완료된 경우
+                            setTimeout(() => {
+                                const completionDiv = document.createElement('div');
+                                completionDiv.className = 'message assistant';
+                                completionDiv.innerHTML = `
+                                    <div class="message-content">
+                                        <div class="alert alert-info">
+                                            모든 문제가 완료되었습니다! 🎉
+                                        </div>
+                                        <div class="text-center mt-3">
+                                            <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('1문제 출제')">1문제 출제</button>
+                                            <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('5문제 출제')">5문제 출제</button>
+                                            <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('10문제 출제')">10문제 출제</button>
+                                            <button class="btn btn-secondary" onclick="chatManager.endQuiz()">종료</button>
+                                        </div>
+                                    </div>
+                                `;
+                                document.getElementById('chat-messages').appendChild(completionDiv);
+                                document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight;
+                            }, 1000);
+                        }
+                        
+                        document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight;
+                    }
+                } catch (error) {
+                    console.error('Error submitting answer:', error);
+                    this.appendMessage('답안 제출 중 오류가 발생했습니다.', 'text', 'assistant');
                 }
             },
 
@@ -282,122 +503,123 @@
                 
                 if (!message) return;
                 
+                // 문제 출제 요청 패턴 확인
+                const quizRequestPattern = /(\d+)문제\s*(출제|내줘|주세요|풀고싶어요|풀래요|풀어볼래요)/;
+                const match = message.match(quizRequestPattern);
+                
                 input.disabled = true;
                 document.getElementById('send-btn').disabled = true;
                 
-                this.appendMessage(message, 'text', 'user');
-                input.value = '';
+                if (match) {
+                    // 문제 출제 요청인 경우 startQuiz 메서드 호출
+                    const questionCount = match[1];
+                    await this.startQuiz(`${questionCount}문제 출제`);
+                } else {
+                    this.appendMessage(message, 'text', 'user');
+                    input.value = '';
 
-                const loadingId = this.appendLoadingMessage();
-
-                try {
-                    const response = await fetch('/api/chat', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            thread_id: this.threadId,
-                            message: message
-                        })
-                    });
-                    
-                    this.removeMessage(loadingId);
-                    
-                    const data = await response.json();
-                    
-                    // 응답 타입에 따른 처리
-                    if (data.type === "CHAT") {
-                        this.appendMessage(data.message, 'text', 'assistant');
-                    } else if (data.type === "ANSWER") {
-                        this.appendMessage(data.answer.explanation, 'text', 'assistant');
-                    } else if (data.type === "QUIZ") {
-                        this.appendMessage(data.quiz, 'quiz');
-                    }
-                    
-                } catch (error) {
-                    this.removeMessage(loadingId);
-                    this.appendMessage('죄송합니다. 메시지 전송 중 오류가 발생했습니다.', 'text', 'assistant');
-                } finally {
-                    input.disabled = false;
-                    document.getElementById('send-btn').disabled = false;
-                    input.focus();
-                }
-            },
-
-            async submitAnswer(answer) {
-                try {
-                    this.appendMessage(answer, 'text', 'user');
-                    
-                    const optionButtons = document.querySelectorAll('.option-btn');
-                    optionButtons.forEach(button => button.disabled = true);
-                    
                     const loadingId = this.appendLoadingMessage();
 
-                    const response = await fetch('/api/chat', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            thread_id: this.threadId,
-                            message: answer
-                        })
-                    });
-                    
-                    this.removeMessage(loadingId);
-                    
-                    const data = await response.json();
-                    
-                    if (data.type === "ANSWER" && data.answer) {
-                        const { correct, explanation } = data.answer;
+                    try {
+                        // thread_id가 없는 경우 새로운 thread 생성
+                        if (!this.threadId) {
+                            const threadResponse = await fetch('/api/quiz/new', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    message: 'init'
+                                })
+                            });
+                            const threadData = await threadResponse.json();
+                            if (threadData.thread_id) {
+                                this.threadId = threadData.thread_id;
+                            }
+                        }
+
+                        // 일반 질문인 경우
+                        const response = await fetch('/api/chat', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                thread_id: this.threadId,
+                                message: message
+                            })
+                        });
                         
-                        const resultMessage = correct ? 
-                            '<div class="alert alert-success mb-2">정답입니다! 👏</div>' : 
-                            '<div class="alert alert-danger mb-2">아쉽네요, 오답입니다. 😢</div>';
+                        this.removeMessage(loadingId);
                         
-                        const messageContent = `
-                            ${resultMessage}
-                            ${explanation}
-                        `;
+                        const data = await response.json();
                         
-                        this.appendMessage(messageContent, 'text', 'assistant');
+                        // 응답 타입에 따른 처리
+                        if (data.type === "CHAT") {
+                            this.appendMessage(data.message, 'text', 'assistant');
+                        } else if (data.type === "ANSWER") {
+                            this.appendMessage(data.answer.explanation, 'text', 'assistant');
+                        } else if (data.type === "QUIZ") {
+                            if (data.questions && data.questions.length > 0) {
+                                const firstQuestion = data.questions[0];
+                                this.appendMessage(firstQuestion, 'quiz', 'assistant', {
+                                    current: 1,
+                                    total: data.questions.length
+                                });
+                                this.currentQuestions = data.questions;
+                                if (data.thread_id) {
+                                    this.threadId = data.thread_id;
+                                }
+                            } else if (data.quiz) {
+                                this.appendMessage(data.quiz, 'quiz', 'assistant', data.progress);
+                                if (data.thread_id) {
+                                    this.threadId = data.thread_id;
+                                }
+                            }
+                        } else if (data.type === "ERROR") {
+                            this.appendMessage(data.message, 'text', 'assistant');
+                        }
                         
-                        const messagesContainer = document.getElementById('chat-messages');
-                        const buttonDiv = document.createElement('div');
-                        buttonDiv.className = 'message assistant';
-                        buttonDiv.innerHTML = `
-                            <div class="message-content">
-                                <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('다음 문제')">다음 문제</button>
-                                <button class="btn btn-secondary" onclick="chatManager.endQuiz()">종료</button>
-                            </div>
-                        `;
-                        messagesContainer.appendChild(buttonDiv);
-                        this.saveMessages();  // 버튼 추가 후 저장
-                    } else {
-                        this.appendMessage('응답 형식이 올바르지 않습니다.', 'text', 'assistant');
+                    } catch (error) {
+                        console.error('Error:', error);
+                        this.removeMessage(loadingId);
+                        this.appendMessage('죄송합니다. 메시지 전송 중 오류가 발생했습니다.', 'text', 'assistant');
                     }
-                    
-                } catch (error) {
-                    console.error('답변 제출 중 오류:', error);
-                    this.appendMessage('죄송합니다. 답변 처리 중 오류가 발생했습니다.', 'text', 'assistant');
                 }
+                
+                input.disabled = false;
+                document.getElementById('send-btn').disabled = false;
+                input.value = '';
+                input.focus();
             },
 
-            appendMessage(content, type = 'text', sender = 'assistant') {
+            appendMessage(content, type = 'text', sender = 'assistant', progress = null) {
                 const messagesContainer = document.getElementById('chat-messages');
                 const messageDiv = document.createElement('div');
                 messageDiv.className = `message ${sender}`;
                 
-                if (type === 'quiz' && content && content.options) {
+                if (type === 'quiz' && content) {
+                    // 현재 문제와 총 문제 수 설정
+                    const currentQuestion = progress ? progress.current : 1;
+                    const totalQuestions = progress ? progress.total : 1;
+                    
                     messageDiv.innerHTML = `
                         <div class="quiz-message">
-                            <div class="badge bg-primary">${content.unit}</div>
-                            <div class="mt-2">${content.question}</div>
-                            <div class="quiz-options">
-                                ${content.options.map(option => `
-                                    <button class="option-btn" onclick="chatManager.submitAnswer('${option}')">${option}</button>
-                                `).join('')}
+                            <div class="mb-4 p-3" style="border: 1px solid #dee2e6; border-radius: 10px;">
+                                <div class="badge bg-secondary mb-2">${currentQuestion}/${totalQuestions}번 문제</div>
+                                <div class="badge bg-primary ms-2">${content.unit || '과학'}</div>
+                                <div class="mt-2 mb-3">${content.question}</div>
+                                <div class="quiz-options" style="display: grid; gap: 0.3rem; margin-top: 0.5rem;">
+                                    ${content.options.map((option, optionIndex) => `
+                                        <div class="option-item" 
+                                             style="cursor: pointer; padding: 8px; margin: 2px 0; border: 1px solid #dee2e6; border-radius: 8px; background-color: white; transition: all 0.2s;"
+                                             onmouseover="this.style.backgroundColor='#e9ecef'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'"
+                                             onmouseout="this.style.backgroundColor='white'; this.style.boxShadow='none'"
+                                             onclick="chatManager.submitAnswer(${currentQuestion}, '${option}')">
+                                            ${option}
+                                        </div>
+                                    `).join('')}
+                                </div>
                             </div>
                         </div>
                     `;
@@ -428,8 +650,13 @@
                 }
                 
                 messagesContainer.appendChild(messageDiv);
-                messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                this.saveMessages();  // 메시지 추가 후 저장
+                
+                // 스크롤을 최하단으로 이동 (requestAnimationFrame 사용)
+                requestAnimationFrame(() => {
+                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                });
+                
+                this.saveMessages();
             },
 
             appendLoadingMessage() {

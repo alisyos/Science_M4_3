@@ -78,13 +78,40 @@ class ScienceQuizBot:
         if not self.assistant_id:
             raise ValueError("Assistant ID not found in environment variables")
 
-    def get_quiz(self, thread_id):
+    def get_quiz(self, thread_id, question_count=1):
         try:
             # 명확한 퀴즈 생성 요청
+            prompt = f"""중학교 과학 관련 문제를 {question_count}개 출제해주세요.
+반드시 다음 JSON 형식을 정확히 따라야 합니다:
+
+{{
+  "type": "QUIZ",
+  "questions": [
+    {{
+      "unit": "단원명",
+      "question": "문제 내용",
+      "options": ["보기1", "보기2", "보기3", "보기4", "보기5"],
+      "correct": "정답",
+      "type": "용어 정의",
+      "explanation": "해설"
+    }}
+  ]
+}}
+
+중요 규칙:
+1. questions 배열에 정확히 {question_count}개의 문제가 있어야 합니다.
+2. 각 문제는 반드시 unit, question, options, correct, type, explanation 필드를 모두 포함해야 합니다.
+3. options 배열은 정확히 5개의 보기를 포함해야 합니다.
+4. correct는 반드시 options 배열의 요소 중 하나와 정확히 일치해야 합니다."""
+
+            print("=== 전송하는 프롬프트 ===")
+            print(prompt)
+            print("========================")
+
             client.beta.threads.messages.create(
                 thread_id=thread_id,
                 role="user",
-                content="새로운 과학 퀴즈를 생성해주세요. 반드시 QUIZ 타입으로 응답해주세요."
+                content=prompt
             )
             
             run = client.beta.threads.runs.create(
@@ -114,17 +141,27 @@ class ScienceQuizBot:
             
             try:
                 response = json.loads(response_text)
-                if response.get('type') == 'QUIZ' and 'quiz' in response:
-                    self.current_quiz = response.get('quiz')
-                    return response
-                else:
-                    # 퀴즈 형식이 아닌 경우 재시도
-                    return self.get_quiz(thread_id)
+                if response.get('type') == 'QUIZ' and 'questions' in response:
+                    questions = response['questions']
+                    if len(questions) != question_count:
+                        print(f"Expected {question_count} questions but got {len(questions)}")
+                        return self.get_quiz(thread_id, question_count)
+                    
+                    return {
+                        'type': 'QUIZ',
+                        'questions': questions,
+                        'current_question': 0,
+                        'total_questions': len(questions)
+                    }
+                
+                # 형식이 맞지 않는 경우 재시도
+                return self.get_quiz(thread_id, question_count)
+                
             except json.JSONDecodeError as e:
                 print(f"JSON decode error: {e}")
                 print(f"Response text: {response_text}")
                 # JSON 파싱 실패 시 재시도
-                return self.get_quiz(thread_id)
+                return self.get_quiz(thread_id, question_count)
             
         except Exception as e:
             print(f"Error getting quiz: {str(e)}")
@@ -173,8 +210,16 @@ class ScienceQuizBot:
                     # 현재 퀴즈 정보 가져오기
                     current_quiz = current_quiz_store.get(thread_id)
                     if current_quiz and current_user.is_authenticated:
-                        # 단원명 표준화
-                        unit_name = current_quiz.get('unit', '').strip()
+                        # 여러 문제일 경우 현재 문제의 단원 정보 가져오기
+                        if isinstance(current_quiz, dict) and 'questions' in current_quiz:
+                            current_index = current_quiz.get('current_index', 0)
+                            unit_name = current_quiz['questions'][current_index].get('unit', '').strip()
+                            question = current_quiz['questions'][current_index].get('question', '')
+                        else:
+                            # 단일 문제일 경우
+                            unit_name = current_quiz.get('unit', '').strip()
+                            question = current_quiz.get('question', '')
+                        
                         # '화학 반응의 규칙과 에너지 변화' 케이스 처리
                         if '화학' in unit_name and '반응' in unit_name and '규칙' in unit_name and '에너지' in unit_name:
                             unit_name = '화학 반응의 규칙과 에너지 변화'
@@ -183,7 +228,7 @@ class ScienceQuizBot:
                         answer = Answer(
                             user_id=current_user.id,
                             unit=unit_name,
-                            question=current_quiz.get('question', ''),
+                            question=question,
                             user_answer=message,
                             is_correct=response['answer'].get('correct', False),
                             timestamp=datetime.utcnow()
@@ -333,24 +378,47 @@ def new_quiz():
         # 새로운 thread 생성
         thread = client.beta.threads.create()
         thread_id = thread.id
-        
-        print("=== 퀴즈 응답 ===")
-        response = quiz_bot.get_quiz(thread_id)
+
+        # 요청된 문제 수 확인 (기본값: 1)
+        data = request.get_json() or {}
+        message = data.get('message', '테스트 시작').strip()
+        question_count = 1
+
+        if '문제 출제' in message:
+            if '1문제' in message:
+                question_count = 1
+            elif '5문제' in message:
+                question_count = 5
+            elif '10문제' in message:
+                question_count = 10
+
+        print(f"=== {question_count}문제 출제 시작 ===")
+        response = quiz_bot.get_quiz(thread_id, question_count)
         
         if response.get('type') == 'QUIZ':
             print(json.dumps(response, indent=4, ensure_ascii=False))
-            quiz = response.get('quiz')
             
-            # 현재 퀴즈 정보 저장
-            current_quiz_store[thread_id] = quiz
+            if question_count > 1 and 'questions' in response:
+                # 첫 번째 문제 반환
+                first_question = response['questions'][0]
+                current_quiz_store[thread_id] = {
+                    'questions': response['questions'],
+                    'current_index': 0,
+                    'total_questions': question_count
+                }
+                return jsonify({
+                    'type': 'QUIZ',
+                    'quiz': first_question,
+                    'progress': {
+                        'current': 1,
+                        'total': question_count
+                    },
+                    'thread_id': thread_id
+                })
             
-            print("=== 퀴즈 정보 저장 ===")
-            print(f"스레드: {thread_id}")
-            print(f"퀴즈: {quiz}")
-            
-            # thread_id를 응답에 포함
+            # 단일 문제인 경우
+            current_quiz_store[thread_id] = response.get('questions')[0]
             response['thread_id'] = thread_id
-            
             return jsonify(response)
         else:
             raise ValueError("Invalid quiz format")
@@ -383,7 +451,7 @@ def chat():
         
         print("=== 받은 메시지 ===")
         print(message)
-        print(f"Thread ID: {thread_id}")  # thread_id 로깅 추가
+        print(f"Thread ID: {thread_id}")
         
         if not thread_id:
             return jsonify({
@@ -391,12 +459,72 @@ def chat():
                 'message': '유효하지 않은 세션입니다.'
             }), 400
         
+        # 문제 수 확인
+        question_count = None
+        if '문제 출제' in message:
+            if '1문제' in message:
+                question_count = 1
+            elif '5문제' in message:
+                question_count = 5
+            elif '10문제' in message:
+                question_count = 10
+            print(f"=== 요청된 문제 수: {question_count} ===")
+        
         # 현재 진행 중인 퀴즈가 있는지 확인
         current_quiz = current_quiz_store.get(thread_id)
         
-        if current_quiz:
+        if question_count is not None:
+            print(f"=== {question_count}문제 출제 시작 ===")
+            response = quiz_bot.get_quiz(thread_id, question_count)
+            
+            if question_count > 1 and 'questions' in response:
+                # 첫 번째 문제 반환
+                first_question = response['questions'][0]
+                current_quiz_store[thread_id] = {
+                    'questions': response['questions'],
+                    'current_index': 0,
+                    'total_questions': question_count
+                }
+                return jsonify({
+                    'type': 'QUIZ',
+                    'quiz': first_question,
+                    'progress': {
+                        'current': 1,
+                        'total': question_count
+                    }
+                })
+            return jsonify(response)
+            
+        elif current_quiz and isinstance(current_quiz, dict) and 'questions' in current_quiz:
             print("=== 답변 체크 시작 ===")
             response = quiz_bot.check_answer(message, thread_id)
+            
+            if response.get('type') == 'ANSWER':
+                current_index = current_quiz['current_index']
+                total_questions = current_quiz['total_questions']
+                
+                if current_index + 1 < total_questions:
+                    # 다음 문제 준비
+                    current_quiz['current_index'] += 1
+                    next_question = current_quiz['questions'][current_quiz['current_index']]
+                    response['next_question'] = {
+                        'type': 'QUIZ',
+                        'quiz': next_question,
+                        'progress': {
+                            'current': current_quiz['current_index'] + 1,
+                            'total': total_questions
+                        }
+                    }
+                else:
+                    response['quiz_completed'] = True
+                    
+            return jsonify(response)
+            
+        elif current_quiz:
+            print("=== 답변 체크 시작 ===")
+            response = quiz_bot.check_answer(message, thread_id)
+            return jsonify(response)
+            
         else:
             print("=== 일반 질문 처리 ===")
             response = quiz_bot.get_chat_response(message, thread_id)
@@ -410,11 +538,8 @@ def chat():
                         'explanation': explanation
                     }
                 }
-        
-        print("=== 답변 결과 ===")
-        print(response)
-        
-        return jsonify(response)
+            
+            return jsonify(response)
         
     except Exception as e:
         print(f"Error in chat: {str(e)}")
