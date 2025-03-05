@@ -14,8 +14,8 @@ AI 기반의 과학 퀴즈 학습 플랫폼입니다. 학생들의 학습 진도
 
 1. 저장소 클론:
 ```bash
-git clone [저장소_URL]
-cd [프로젝트_디렉토리]
+git clone https://github.com/alisyos/Science_M4_3.git
+cd Science_M4_3
 ```
 
 2. 가상환경 생성 및 활성화:
