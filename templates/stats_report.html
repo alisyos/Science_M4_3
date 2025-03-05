@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>학습 통계 리포트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            line-height: 1.6;
+        }
+        .report-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .report-date {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 30px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f4f4f4;
+        }
+        .section {
+            margin-bottom: 40px;
+        }
+        .section-title {
+            color: #333;
+            border-bottom: 2px solid #333;
+            margin-bottom: 20px;
+            padding-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="report-header">
+        <h1>학습 통계 리포트</h1>
+        <div class="report-date">생성일시: {{ generated_at.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+    </div>
+
+    {% if report_type == 'both' or report_type == 'unit' %}
+    <div class="section">
+        <h2 class="section-title">단원별 통계</h2>
+        {% if selected_student %}
+        <p>학생: {{ selected_student.username }}</p>
+        {% endif %}
+        <table>
+            <thead>
+                <tr>
+                    <th>단원</th>
+                    <th>풀이 횟수</th>
+                    <th>정답 수</th>
+                    <th>정답률</th>
+                    {% if not selected_student %}
+                    <th>참여 학생 수</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for stat in unit_stats %}
+                <tr>
+                    <td>{{ stat.name }}</td>
+                    <td>{{ stat.attempts }}</td>
+                    <td>{{ stat.correct }}</td>
+                    <td>{{ "%.1f"|format(stat.accuracy_rate) }}%</td>
+                    {% if not selected_student %}
+                    <td>{{ stat.unique_students }}</td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if report_type == 'both' or report_type == 'student' %}
+    <div class="section">
+        <h2 class="section-title">학생별 통계</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>학생</th>
+                    <th>풀이 문제 수</th>
+                    <th>정답 수</th>
+                    <th>오답 수</th>
+                    <th>정답률</th>
+                    <th>학습 진도율</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user, total, correct in student_stats %}
+                <tr>
+                    <td>{{ user.username }}</td>
+                    <td>{{ total }}</td>
+                    <td>{{ correct }}</td>
+                    <td>{{ total - correct }}</td>
+                    <td>{{ "%.1f"|format((correct / total * 100) if total > 0 else 0) }}%</td>
+                    <td>{{ "%.1f"|format(total/100 * 100 if total <= 100 else 100) }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</body>
+</html> 

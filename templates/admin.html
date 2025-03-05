@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2 class="mb-4">대시보드</h2>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>대시보드</h2>
+    <button onclick="window.location.href='/api/admin/statistics/download'" class="btn btn-primary">
+        통계 리포트 다운로드
+    </button>
+</div>
 
 <!-- 통계 카드 -->
 <div class="row mb-4">
@@ -40,11 +45,11 @@
 </div>
 
 <!-- 단원별 통계 -->
-<div class="card mb-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="mb-0">단원별 통계</h5>
+<div class="section">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>단원별 통계</h3>
         <div class="d-flex align-items-center">
-            <select class="form-select me-2" id="studentSelect" onchange="updateUnitStats(this.value)">
+            <select id="studentSelect" class="form-select me-2" style="width: auto;">
                 <option value="">전체</option>
                 {% for student in students %}
                 <option value="{{ student.id }}" {% if selected_student_id == student.id %}selected{% endif %}>
@@ -52,6 +57,9 @@
                 </option>
                 {% endfor %}
             </select>
+            <button onclick="downloadUnitStatsReport()" class="btn btn-success" style="white-space: nowrap;">
+                단원별 통계 다운로드
+            </button>
         </div>
     </div>
     <div class="card-body">
@@ -90,7 +98,10 @@
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0">학생별 통계</h5>
-        <button id="deleteAllBtn" class="btn btn-danger">전체 통계 삭제</button>
+        <div>
+            <button id="deleteAllBtn" class="btn btn-danger me-2">전체 통계 삭제</button>
+            <button class="btn btn-success" onclick="downloadStudentStatsReport()">학생별 통계 다운로드</button>
+        </div>
     </div>
     <div class="card-body">
         <div class="table-responsive">
@@ -141,17 +152,23 @@
 </div>
 
 <script>
-function updateUnitStats(studentId) {
-    const url = new URL(window.location.href);
-    if (studentId) {
-        url.searchParams.set('student_id', studentId);
-    } else {
-        url.searchParams.delete('student_id');
-    }
-    window.location.href = url.toString();
-}
-
 document.addEventListener('DOMContentLoaded', function() {
+    // 학생 선택 이벤트 핸들러 추가
+    document.getElementById('studentSelect').addEventListener('change', function() {
+        updateUnitStats(this.value);
+    });
+
+    // 기존 함수 수정
+    function updateUnitStats(studentId) {
+        const url = new URL(window.location.href);
+        if (studentId) {
+            url.searchParams.set('student_id', studentId);
+        } else {
+            url.searchParams.delete('student_id');
+        }
+        window.location.href = url.toString();
+    }
+
     // 개별 통계 삭제
     document.querySelectorAll('.delete-stats').forEach(button => {
         button.addEventListener('click', function() {
@@ -161,41 +178,27 @@ document.addEventListener('DOMContentLoaded', function() {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                    },
+                        'X-CSRFToken': csrfToken
+                    }
                 }).then(response => {
                     if (response.ok) {
-                        location.reload();
+                        window.location.reload();
                     } else {
-                        alert('통계 삭제 중 오류가 발생했습니다.');
+                        alert('통계 삭제에 실패했습니다.');
                     }
-                }).catch(error => {
-                    console.error('Error:', error);
-                    alert('통계 삭제 중 오류가 발생했습니다.');
                 });
             }
         });
     });
-
-    // 전체 통계 삭제
-    document.getElementById('deleteAllBtn').addEventListener('click', function() {
-        if (confirm('모든 학생의 통계를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) {
-            fetch('/admin/stats/delete-all', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            }).then(response => {
-                if (response.ok) {
-                    location.reload();
-                } else {
-                    alert('통계 삭제 중 오류가 발생했습니다.');
-                }
-            }).catch(error => {
-                console.error('Error:', error);
-                alert('통계 삭제 중 오류가 발생했습니다.');
-            });
-        }
-    });
 });
+
+function downloadUnitStatsReport() {
+    const studentId = document.getElementById('studentSelect').value;
+    window.location.href = `/admin/stats/unit-report${studentId ? `?student_id=${studentId}` : ''}`;
+}
+
+function downloadStudentStatsReport() {
+    window.location.href = '/admin/stats/student-report';
+}
 </script>
-{% endblock %} 
+{% endblock %}

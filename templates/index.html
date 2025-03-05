@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow-lg">
+                <div class="card-header bg-primary text-white">
+                    <h2 class="text-center mb-0">
+                        <i class="fas fa-book-open me-2"></i>
+                        중학교 과학 어휘 테스트
+                    </h2>
+                </div>
+                <div class="card-body">
+                    <div class="text-center mb-4">
+                        <p class="lead text-muted">
+                            과학 개념을 정확하게 이해하고 있는지 테스트해보세요!
+                        </p>
+                        <hr class="my-4">
+                    </div>
+                    
+                    <div id="quiz-container">
+                        <!-- 퀴즈 내용은 동적으로 로드됨 -->
+                    </div>
+                    
+                    <div class="text-center mt-4">
+                        <button id="new-quiz" class="btn btn-primary btn-lg px-4">
+                            <i class="fas fa-play me-2"></i>
+                            테스트 시작하기
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

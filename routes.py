@@ -1,13 +1,15 @@
-from flask import Flask, request, jsonify, render_template, current_app, send_from_directory
+from flask import Flask, request, jsonify, render_template, current_app, send_from_directory, make_response
 from openai import OpenAI
 import json
 import random
 from datetime import datetime
 from database import Base, db
-from sqlalchemy import func, case
+from sqlalchemy import func, case, distinct
 import os
 import time
 import logging
+from flask_login import login_required
+from models import User, Answer
 
 app = Flask(__name__)
 client = OpenAI(
@@ -166,18 +168,96 @@ def init_routes(app):
             'correct': r.correct_answers
         } for r in results])
 
-    return app
+    @app.route('/admin/stats/unit-report')
+    @login_required
+    def download_unit_stats():
+        student_id = request.args.get('student_id')
+        
+        # 단원별 통계 쿼리
+        query = db.session.query(
+            Answer.unit,
+            func.count(Answer.id).label('attempts'),
+            func.sum(case((Answer.is_correct, 1), else_=0)).label('correct'),
+            func.count(distinct(Answer.user_id)).label('unique_students')
+        )
+        
+        if student_id:
+            query = query.filter(Answer.user_id == student_id)
+        
+        unit_stats = query.group_by(Answer.unit).all()
+        
+        # 선택된 학생 정보
+        selected_student = User.query.get(student_id) if student_id else None
+        
+        html = render_template('stats_report.html',
+                             generated_at=datetime.utcnow(),
+                             report_type='unit',
+                             selected_student=selected_student,
+                             unit_stats=[{
+                                 'name': stat.unit,
+                                 'attempts': stat.attempts,
+                                 'correct': stat.correct,
+                                 'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+                                 'unique_students': stat.unique_students
+                             } for stat in unit_stats])
+        
+        response = make_response(html)
+        response.headers['Content-Type'] = 'text/html'
+        response.headers['Content-Disposition'] = f'attachment; filename=unit_stats_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.html'
+        return response
 
-@app.route('/api/admin/statistics', methods=['GET'])
-def get_statistics():
-    results = db.session.query(
-        QuizResult.unit,
-        func.count(QuizResult.id).label('total_questions'),
-        func.sum(case((QuizResult.is_correct, 1), else_=0)).label('correct_answers')
-    ).group_by(QuizResult.unit).all()
-    
-    return jsonify([{
-        'unit': r.unit,
-        'total': r.total_questions,
-        'correct': r.correct_answers
-    } for r in results]) 
+    @app.route('/admin/stats/student-report')
+    @login_required
+    def download_student_stats():
+        # 학생별 통계 쿼리
+        student_stats = db.session.query(
+            User,
+            func.count(Answer.id).label('total'),
+            func.sum(case((Answer.is_correct, 1), else_=0)).label('correct')
+        ).join(Answer).group_by(User.id).all()
+        
+        html = render_template('stats_report.html',
+                             generated_at=datetime.utcnow(),
+                             report_type='student',
+                             student_stats=student_stats)
+        
+        response = make_response(html)
+        response.headers['Content-Type'] = 'text/html'
+        response.headers['Content-Disposition'] = f'attachment; filename=student_stats_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.html'
+        return response
+
+    @app.route('/api/admin/statistics/download')
+    @login_required
+    def download_statistics():
+        # 전체 통계 (단원별 + 학생별)
+        unit_stats = db.session.query(
+            Answer.unit,
+            func.count(Answer.id).label('attempts'),
+            func.sum(case((Answer.is_correct, 1), else_=0)).label('correct'),
+            func.count(distinct(Answer.user_id)).label('unique_students')
+        ).group_by(Answer.unit).all()
+        
+        student_stats = db.session.query(
+            User,
+            func.count(Answer.id).label('total'),
+            func.sum(case((Answer.is_correct, 1), else_=0)).label('correct')
+        ).join(Answer).group_by(User.id).all()
+        
+        html = render_template('stats_report.html',
+                             generated_at=datetime.utcnow(),
+                             report_type='both',
+                             unit_stats=[{
+                                 'name': stat.unit,
+                                 'attempts': stat.attempts,
+                                 'correct': stat.correct,
+                                 'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+                                 'unique_students': stat.unique_students
+                             } for stat in unit_stats],
+                             student_stats=student_stats)
+        
+        response = make_response(html)
+        response.headers['Content-Type'] = 'text/html'
+        response.headers['Content-Disposition'] = f'attachment; filename=statistics_report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.html'
+        return response
+
+    return app
