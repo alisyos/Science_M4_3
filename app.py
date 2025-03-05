@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash, make_response
-from openai import OpenAI
+import openai
 import json
 import random
 from datetime import datetime
@@ -61,11 +61,8 @@ if not api_key:
 else:
     print("API key loaded successfully:", api_key[:10] + "...")
 
-# OpenAI 클라이언트 설정
-client = OpenAI(
-    api_key=api_key,
-    base_url="https://api.openai.com/v1"  # 기본 OpenAI API 엔드포인트 사용
-)
+# OpenAI API 키 설정
+openai.api_key = api_key
 
 # 전역 변수로 current_quiz 저장
 current_quiz_store = {}
@@ -81,28 +78,18 @@ class ScienceQuizBot:
     def get_quiz(self, thread_id):
         try:
             # 명확한 퀴즈 생성 요청
-            client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content="새로운 과학 퀴즈를 생성해주세요. 반드시 QUIZ 타입으로 응답해주세요."
+            openai.api_key = api_key
+            openai.api_base = "https://api.openai.com/v1"  # 기본 OpenAI API 엔드포인트 사용
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": "새로운 과학 퀴즈를 생성해주세요. 반드시 QUIZ 타입으로 응답해주세요."}],
+                max_tokens=1000,
+                n=1,
+                stop=None,
+                temperature=0.8,
             )
             
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=self.assistant_id
-            )
-            
-            while True:
-                run_status = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
-                if run_status.status == 'completed':
-                    break
-                time.sleep(1)
-            
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            response_text = messages.data[0].content[0].text.value
+            response_text = response.choices[0].message['content']
             
             # 마크다운 코드 블록 제거
             if response_text.startswith('```'):
@@ -135,28 +122,18 @@ class ScienceQuizBot:
 
     def check_answer(self, message, thread_id):
         try:
-            client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content=message
+            openai.api_key = api_key
+            openai.api_base = "https://api.openai.com/v1"  # 기본 OpenAI API 엔드포인트 사용
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": message}],
+                max_tokens=1000,
+                n=1,
+                stop=None,
+                temperature=0.8,
             )
             
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=self.assistant_id
-            )
-            
-            while True:
-                run_status = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
-                if run_status.status == 'completed':
-                    break
-                time.sleep(1)
-            
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            response_text = messages.data[0].content[0].text.value
+            response_text = response.choices[0].message['content']
             
             if response_text.startswith('```'):
                 response_text = response_text.split('```')[1]
@@ -226,30 +203,20 @@ class ScienceQuizBot:
 
     def get_chat_response(self, message, thread_id):
         try:
-            client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content=message
+            openai.api_key = api_key
+            openai.api_base = "https://api.openai.com/v1"  # 기본 OpenAI API 엔드포인트 사용
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": message}],
+                max_tokens=1000,
+                n=1,
+                stop=None,
+                temperature=0.8,
             )
             
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=self.assistant_id
-            )
+            response_text = response.choices[0].message['content']
             
-            while True:
-                run_status = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
-                if run_status.status == 'completed':
-                    break
-                time.sleep(1)
-            
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            response = messages.data[0].content[0].text.value
-            
-            return json.loads(response)
+            return json.loads(response_text)
             
         except Exception as e:
             print(f"Error getting chat response: {str(e)}")
@@ -325,10 +292,6 @@ def quiz_page():
 def new_quiz():
     try:
         # 새로운 thread 생성
-        thread = client.beta.threads.create()
-        thread_id = thread.id
-        
-        print("=== 퀴즈 응답 ===")
         response = quiz_bot.get_quiz(thread_id)
         
         if response.get('type') == 'QUIZ':
