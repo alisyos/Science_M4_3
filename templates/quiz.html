@@ -155,7 +155,10 @@
         {% if current_user.is_authenticated %}
             <div class="container d-flex justify-content-between align-items-center">
                 <span><i class="fas fa-user"></i> {{ current_user.username }}님 환영합니다!</span>
-                <a href="{{ url_for('logout') }}" class="btn btn-outline-primary btn-sm">로그아웃</a>
+                <div>
+                    <button id="reset-chat" class="btn btn-warning btn-sm me-2">대화 초기화</button>
+                    <a href="{{ url_for('logout') }}" class="btn btn-outline-primary btn-sm">로그아웃</a>
+                </div>
             </div>
         {% else %}
             <div class="container">
@@ -185,6 +188,7 @@
         // 전역 변수 선언
         let currentThreadId = null;
         let isInitialized = false;
+        const currentUser = '{{ current_user.username }}';  // Jinja 템플릿에서 현재 사용자 이름 가져오기
 
         // 채팅 관리자 객체
         const chatManager = {
@@ -192,19 +196,49 @@
             threadId: null,
 
             async init() {
-                this.appendMessage('안녕하세요! 중학교 과학 학습 도우미입니다.', 'text', 'assistant');
+                // 사용자별 저장된 메시지 불러오기
+                const savedMessages = localStorage.getItem(`chatMessages_${currentUser}`);
+                const savedThreadId = localStorage.getItem(`threadId_${currentUser}`);
                 
+                if (savedMessages && savedThreadId) {
+                    const messagesContainer = document.getElementById('chat-messages');
+                    messagesContainer.innerHTML = savedMessages;
+                    this.threadId = savedThreadId;
+                    isInitialized = true;
+                } else {
+                    this.appendMessage('안녕하세요! 중학교 과학 학습 도우미입니다.', 'text', 'assistant');
+                    
+                    const messagesContainer = document.getElementById('chat-messages');
+                    const buttonDiv = document.createElement('div');
+                    buttonDiv.className = 'message assistant';
+                    buttonDiv.innerHTML = `
+                        <div class="message-content">
+                            <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('테스트 시작')">테스트 시작</button>
+                            <button class="btn btn-secondary" onclick="chatManager.endQuiz()">나중에 하기</button>
+                        </div>
+                    `;
+                    messagesContainer.appendChild(buttonDiv);
+                    isInitialized = true;
+                }
+            },
+
+            // 메시지 저장 함수 수정
+            saveMessages() {
                 const messagesContainer = document.getElementById('chat-messages');
-                const buttonDiv = document.createElement('div');
-                buttonDiv.className = 'message assistant';
-                buttonDiv.innerHTML = `
-                    <div class="message-content">
-                        <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('테스트 시작')">테스트 시작</button>
-                        <button class="btn btn-secondary" onclick="chatManager.endQuiz()">나중에 하기</button>
-                    </div>
-                `;
-                messagesContainer.appendChild(buttonDiv);
-                isInitialized = true;
+                localStorage.setItem(`chatMessages_${currentUser}`, messagesContainer.innerHTML);
+                if (this.threadId) {
+                    localStorage.setItem(`threadId_${currentUser}`, this.threadId);
+                }
+            },
+
+            // 대화 초기화 함수 수정
+            resetChat() {
+                localStorage.removeItem(`chatMessages_${currentUser}`);
+                localStorage.removeItem(`threadId_${currentUser}`);
+                const messagesContainer = document.getElementById('chat-messages');
+                messagesContainer.innerHTML = '';
+                this.threadId = null;
+                this.init();
             },
 
             async startQuiz(buttonText = '테스트 시작') {
@@ -339,6 +373,7 @@
                             </div>
                         `;
                         messagesContainer.appendChild(buttonDiv);
+                        this.saveMessages();  // 버튼 추가 후 저장
                     } else {
                         this.appendMessage('응답 형식이 올바르지 않습니다.', 'text', 'assistant');
                     }
@@ -394,6 +429,7 @@
                 
                 messagesContainer.appendChild(messageDiv);
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                this.saveMessages();  // 메시지 추가 후 저장
             },
 
             appendLoadingMessage() {
@@ -434,6 +470,13 @@
             document.getElementById('chat-input').addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') {
                     chatManager.sendMessage.call(chatManager);
+                }
+            });
+
+            // 초기화 버튼 이벤트 리스너 추가
+            document.getElementById('reset-chat').addEventListener('click', () => {
+                if (confirm('모든 대화 내용이 삭제됩니다. 계속하시겠습니까?')) {
+                    chatManager.resetChat();
                 }
             });
         });
