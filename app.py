@@ -173,10 +173,16 @@ class ScienceQuizBot:
                     # 현재 퀴즈 정보 가져오기
                     current_quiz = current_quiz_store.get(thread_id)
                     if current_quiz and current_user.is_authenticated:
+                        # 단원명 표준화
+                        unit_name = current_quiz.get('unit', '').strip()
+                        # '화학 반응의 규칙과 에너지 변화' 케이스 처리
+                        if '화학' in unit_name and '반응' in unit_name and '규칙' in unit_name and '에너지' in unit_name:
+                            unit_name = '화학 반응의 규칙과 에너지 변화'
+                        
                         # DB에 답변 저장
                         answer = Answer(
                             user_id=current_user.id,
-                            unit=current_quiz.get('unit', ''),
+                            unit=unit_name,
                             question=current_quiz.get('question', ''),
                             user_answer=message,
                             is_correct=response['answer'].get('correct', False),
@@ -186,7 +192,7 @@ class ScienceQuizBot:
                         db.session.commit()
                         
                         print("=== 답변 저장 완료 ===")
-                        print(f"단원: {current_quiz.get('unit')}")
+                        print(f"단원: {unit_name}")
                         print(f"정답여부: {response['answer'].get('correct')}")
                     
                     return response
@@ -637,6 +643,35 @@ def delete_all_stats():
         db.session.rollback()
         print(f"Error deleting all stats: {str(e)}")
         return jsonify({'error': '통계 삭제 중 오류가 발생했습니다.'}), 500
+
+@app.route('/admin/stats/standardize-units', methods=['POST'])
+@login_required
+def standardize_unit_names():
+    if current_user.username != 'admin':
+        return jsonify({'error': '권한이 없습니다.'}), 403
+        
+    try:
+        # '화학 반응의 규칙과 에너지 변화' 단원명 표준화
+        answers = Answer.query.filter(
+            Answer.unit.like('%화학%반응%규칙%에너지%변화%')
+        ).all()
+        
+        standardized_count = 0
+        for answer in answers:
+            if answer.unit != '화학 반응의 규칙과 에너지 변화':
+                answer.unit = '화학 반응의 규칙과 에너지 변화'
+                standardized_count += 1
+        
+        db.session.commit()
+        flash(f'단원명 표준화가 완료되었습니다. {standardized_count}개의 레코드가 수정되었습니다.', 'success')
+        return jsonify({
+            'success': True,
+            'standardized_count': standardized_count
+        })
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error standardizing unit names: {str(e)}")
+        return jsonify({'error': '단원명 표준화 중 오류가 발생했습니다.'}), 500
 
 @app.route('/admin/stats/unit-report')
 @login_required
