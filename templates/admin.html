@@ -49,6 +49,7 @@
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h3>단원별 통계</h3>
         <div class="d-flex align-items-center">
+            <button id="standardizeUnits" class="btn btn-primary me-2">단원명 표준화</button>
             <select id="studentSelect" class="form-select me-2" style="width: auto;">
                 <option value="">전체</option>
                 {% for student in students %}
@@ -200,5 +201,29 @@ function downloadUnitStatsReport() {
 function downloadStudentStatsReport() {
     window.location.href = '/admin/stats/student-report';
 }
+
+document.getElementById('standardizeUnits').addEventListener('click', function() {
+    if (confirm('단원명을 표준화하시겠습니까?')) {
+        fetch('/admin/stats/standardize-units', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(`단원명 표준화가 완료되었습니다. ${data.standardized_count}개의 레코드가 수정되었습니다.`);
+                location.reload();
+            } else {
+                alert(data.error || '오류가 발생했습니다.');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('오류가 발생했습니다.');
+        });
+    }
+});
 </script>
 {% endblock %}
