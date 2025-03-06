@@ -205,41 +205,9 @@ class ScienceQuizBot:
             try:
                 response = json.loads(response_text)
                 
-                # ANSWER 타입 응답 처리 및 DB 저장
+                # 응답 타입에 따른 처리
                 if response.get('type') == 'ANSWER':
-                    # 현재 퀴즈 정보 가져오기
-                    current_quiz = current_quiz_store.get(thread_id)
-                    if current_quiz and current_user.is_authenticated:
-                        # 여러 문제일 경우 현재 문제의 단원 정보 가져오기
-                        if isinstance(current_quiz, dict) and 'questions' in current_quiz:
-                            current_index = current_quiz.get('current_index', 0)
-                            unit_name = current_quiz['questions'][current_index].get('unit', '').strip()
-                            question = current_quiz['questions'][current_index].get('question', '')
-                        else:
-                            # 단일 문제일 경우
-                            unit_name = current_quiz.get('unit', '').strip()
-                            question = current_quiz.get('question', '')
-                        
-                        # '화학 반응의 규칙과 에너지 변화' 케이스 처리
-                        if '화학' in unit_name and '반응' in unit_name and '규칙' in unit_name and '에너지' in unit_name:
-                            unit_name = '화학 반응의 규칙과 에너지 변화'
-                        
-                        # DB에 답변 저장
-                        answer = Answer(
-                            user_id=current_user.id,
-                            unit=unit_name,
-                            question=question,
-                            user_answer=message,
-                            is_correct=response['answer'].get('correct', False),
-                            timestamp=datetime.utcnow()
-                        )
-                        db.session.add(answer)
-                        db.session.commit()
-                        
-                        print("=== 답변 저장 완료 ===")
-                        print(f"단원: {unit_name}")
-                        print(f"정답여부: {response['answer'].get('correct')}")
-                    
+                    # 답변 저장 로직은 chat 라우트에서 처리하므로 여기서는 제거
                     return response
                 
                 # QUIZ 타입 응답 처리
@@ -448,10 +416,12 @@ def chat():
         data = request.get_json()
         message = data.get('message', '').strip()
         thread_id = data.get('thread_id')
+        is_quiz_answer = data.get('is_quiz_answer', False)  # 퀴즈 답변 여부 확인
         
         print("=== 받은 메시지 ===")
         print(message)
         print(f"Thread ID: {thread_id}")
+        print(f"Is Quiz Answer: {is_quiz_answer}")
         
         if not thread_id:
             return jsonify({
@@ -493,36 +463,76 @@ def chat():
                         'total': question_count
                     }
                 })
+            else:
+                # 1문제 출제의 경우
+                if 'questions' in response and len(response['questions']) > 0:
+                    current_quiz_store[thread_id] = response['questions'][0]
+                    return jsonify({
+                        'type': 'QUIZ',
+                        'quiz': response['questions'][0]
+                    })
             return jsonify(response)
             
-        elif current_quiz and isinstance(current_quiz, dict) and 'questions' in current_quiz:
+        elif current_quiz and isinstance(current_quiz, dict):
             print("=== 답변 체크 시작 ===")
             response = quiz_bot.check_answer(message, thread_id)
             
             if response.get('type') == 'ANSWER':
-                current_index = current_quiz['current_index']
-                total_questions = current_quiz['total_questions']
-                
-                if current_index + 1 < total_questions:
-                    # 다음 문제 준비
-                    current_quiz['current_index'] += 1
-                    next_question = current_quiz['questions'][current_quiz['current_index']]
-                    response['next_question'] = {
-                        'type': 'QUIZ',
-                        'quiz': next_question,
-                        'progress': {
-                            'current': current_quiz['current_index'] + 1,
-                            'total': total_questions
-                        }
-                    }
-                else:
-                    response['quiz_completed'] = True
+                # 여러 문제인 경우
+                if 'questions' in current_quiz:
+                    current_index = current_quiz['current_index']
+                    total_questions = current_quiz['total_questions']
+                    current_question = current_quiz['questions'][current_index]
                     
-            return jsonify(response)
+                    # 답변 저장 - 중복 저장 방지
+                    if current_user.is_authenticated:
+                        answer = Answer(
+                            user_id=current_user.id,
+                            unit=current_question['unit'],
+                            question=current_question['question'],
+                            user_answer=message,
+                            is_correct=response['answer'].get('correct', False),
+                            timestamp=datetime.utcnow()
+                        )
+                        db.session.add(answer)
+                        db.session.commit()
+                        
+                        print("=== 답변 저장 완료 ===")
+                        print(f"단원: {current_question['unit']}")
+                        print(f"정답여부: {response['answer'].get('correct')}")
+                    
+                    if current_index + 1 < total_questions:
+                        # 다음 문제 준비
+                        current_quiz['current_index'] += 1
+                        next_question = current_quiz['questions'][current_quiz['current_index']]
+                        response['next_question'] = {
+                            'type': 'QUIZ',
+                            'quiz': next_question,
+                            'progress': {
+                                'current': current_quiz['current_index'] + 1,
+                                'total': total_questions
+                            }
+                        }
+                    else:
+                        response['quiz_completed'] = True
+                # 단일 문제인 경우
+                else:
+                    if current_user.is_authenticated:
+                        answer = Answer(
+                            user_id=current_user.id,
+                            unit=current_quiz['unit'],
+                            question=current_quiz['question'],
+                            user_answer=message,
+                            is_correct=response['answer'].get('correct', False),
+                            timestamp=datetime.utcnow()
+                        )
+                        db.session.add(answer)
+                        db.session.commit()
+                        
+                        print("=== 답변 저장 완료 ===")
+                        print(f"단원: {current_quiz['unit']}")
+                        print(f"정답여부: {response['answer'].get('correct')}")
             
-        elif current_quiz:
-            print("=== 답변 체크 시작 ===")
-            response = quiz_bot.check_answer(message, thread_id)
             return jsonify(response)
             
         else:

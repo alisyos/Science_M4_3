@@ -400,6 +400,8 @@
 
             async submitAnswer(questionNumber, selectedAnswer) {
                 try {
+                    // 사용자 답변을 UI에 표시
+                    this.appendMessage(selectedAnswer, 'text', 'user');
                     const loadingId = this.appendLoadingMessage();
 
                     const response = await fetch('/api/chat', {
@@ -409,7 +411,8 @@
                         },
                         body: JSON.stringify({
                             thread_id: this.threadId,
-                            message: selectedAnswer
+                            message: selectedAnswer,
+                            is_quiz_answer: true  // 퀴즈 답변임을 표시
                         })
                     });
 
