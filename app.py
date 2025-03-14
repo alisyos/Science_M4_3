@@ -95,10 +95,21 @@ class ScienceQuizBot:
         if not self.assistant_id:
             raise ValueError("Assistant ID not found in environment variables")
 
-    def get_quiz(self, thread_id, question_count=1):
+    def get_quiz(self, thread_id, question_count=1, main_unit=None, sub_unit=None):
         try:
+            # 단원 필터링 조건 추가
+            unit_filter = ""
+            if main_unit and sub_unit:
+                unit_filter = f"""대단원은 '{main_unit}'이고 소단원은 '{sub_unit}'인 문제만 출제해주세요.
+반드시 main_unit 필드에는 '{main_unit}'을, sub_unit 필드에는 '{sub_unit}'을 정확히 입력해야 합니다."""
+            elif main_unit:
+                unit_filter = f"""대단원이 '{main_unit}'인 문제만 출제해주세요.
+반드시 main_unit 필드에는 '{main_unit}'을 정확히 입력해야 합니다."""
+            
             # 명확한 퀴즈 생성 요청
             prompt = f"""중학교 과학 관련 문제를 {question_count}개 출제해주세요.
+{unit_filter}
+
 반드시 다음 JSON 형식을 정확히 따라야 합니다:
 
 {{
@@ -120,7 +131,8 @@ class ScienceQuizBot:
 1. questions 배열에 정확히 {question_count}개의 문제가 있어야 합니다.
 2. 각 문제는 반드시 main_unit, sub_unit, question, options, correct, type, explanation 필드를 모두 포함해야 합니다.
 3. options 배열은 정확히 5개의 보기를 포함해야 합니다.
-4. correct는 반드시 options 배열의 요소 중 하나와 정확히 일치해야 합니다."""
+4. correct는 반드시 options 배열의 요소 중 하나와 정확히 일치해야 합니다.
+5. 단원 정보는 반드시 정확하게 입력해야 합니다."""
 
             print("=== 전송하는 프롬프트 ===")
             print(prompt)
@@ -161,9 +173,29 @@ class ScienceQuizBot:
                 response = json.loads(response_text)
                 if response.get('type') == 'QUIZ' and 'questions' in response:
                     questions = response['questions']
+                    
+                    # 단원 필터링 검증
+                    if main_unit or sub_unit:
+                        valid_questions = []
+                        for q in questions:
+                            if main_unit and sub_unit:
+                                if q.get('main_unit') == main_unit and q.get('sub_unit') == sub_unit:
+                                    valid_questions.append(q)
+                            elif main_unit:
+                                if q.get('main_unit') == main_unit:
+                                    valid_questions.append(q)
+                        
+                        # 유효한 문제가 없거나 요청한 수보다 적으면 다시 요청
+                        if not valid_questions or len(valid_questions) < question_count:
+                            print(f"단원 필터링 조건에 맞는 문제가 부족합니다. 다시 요청합니다.")
+                            return self.get_quiz(thread_id, question_count, main_unit, sub_unit)
+                        
+                        # 유효한 문제만 사용
+                        questions = valid_questions[:question_count]
+                    
                     if len(questions) != question_count:
                         print(f"Expected {question_count} questions but got {len(questions)}")
-                        return self.get_quiz(thread_id, question_count)
+                        return self.get_quiz(thread_id, question_count, main_unit, sub_unit)
                     
                     return {
                         'type': 'QUIZ',
@@ -173,13 +205,13 @@ class ScienceQuizBot:
                     }
                 
                 # 형식이 맞지 않는 경우 재시도
-                return self.get_quiz(thread_id, question_count)
+                return self.get_quiz(thread_id, question_count, main_unit, sub_unit)
                 
             except json.JSONDecodeError as e:
                 print(f"JSON decode error: {e}")
                 print(f"Response text: {response_text}")
                 # JSON 파싱 실패 시 재시도
-                return self.get_quiz(thread_id, question_count)
+                return self.get_quiz(thread_id, question_count, main_unit, sub_unit)
             
         except Exception as e:
             print(f"Error getting quiz: {str(e)}")
@@ -382,8 +414,15 @@ def new_quiz():
             elif '10문제' in message:
                 question_count = 10
 
+        # 단원 필터 추가
+        main_unit = data.get('main_unit')
+        sub_unit = data.get('sub_unit')
+
         print(f"=== {question_count}문제 출제 시작 ===")
-        response = quiz_bot.get_quiz(thread_id, question_count)
+        print(f"대단원 필터: {main_unit}")
+        print(f"소단원 필터: {sub_unit}")
+        
+        response = quiz_bot.get_quiz(thread_id, question_count, main_unit, sub_unit)
         
         if response.get('type') == 'QUIZ':
             print(json.dumps(response, indent=4, ensure_ascii=False))
@@ -447,10 +486,16 @@ def chat():
         thread_id = data.get('thread_id')
         is_quiz_answer = data.get('is_quiz_answer', False)  # 퀴즈 답변 여부 확인
         
+        # 단원 필터 추가
+        main_unit = data.get('main_unit')
+        sub_unit = data.get('sub_unit')
+        
         print("=== 받은 메시지 ===")
         print(message)
         print(f"Thread ID: {thread_id}")
         print(f"Is Quiz Answer: {is_quiz_answer}")
+        print(f"대단원 필터: {main_unit}")
+        print(f"소단원 필터: {sub_unit}")
         
         if not thread_id:
             return jsonify({
@@ -474,7 +519,10 @@ def chat():
         
         if question_count is not None:
             print(f"=== {question_count}문제 출제 시작 ===")
-            response = quiz_bot.get_quiz(thread_id, question_count)
+            print(f"대단원 필터: {main_unit}")
+            print(f"소단원 필터: {sub_unit}")
+            
+            response = quiz_bot.get_quiz(thread_id, question_count, main_unit, sub_unit)
             
             if question_count > 1 and 'questions' in response:
                 # 첫 번째 문제 반환

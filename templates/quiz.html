@@ -160,6 +160,27 @@
                     <a href="{{ url_for('logout') }}" class="btn btn-outline-primary btn-sm">로그아웃</a>
                 </div>
             </div>
+            <div class="container mt-2">
+                <div class="row">
+                    <div class="col-md-5">
+                        <select id="main-unit-select" class="form-select form-select-sm">
+                            <option value="">모든 대단원</option>
+                            <option value="Ⅰ. 화학 반응의 규칙과 에너지 변화">Ⅰ. 화학 반응의 규칙과 에너지 변화</option>
+                            <option value="Ⅱ. 기권과 날씨">Ⅱ. 기권과 날씨</option>
+                            <option value="Ⅲ. 운동과 에너지">Ⅲ. 운동과 에너지</option>
+                            <option value="Ⅳ. 자극과 반응">Ⅳ. 자극과 반응</option>
+                        </select>
+                    </div>
+                    <div class="col-md-5">
+                        <select id="sub-unit-select" class="form-select form-select-sm">
+                            <option value="">모든 소단원</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button id="apply-unit-filter" class="btn btn-primary btn-sm w-100">적용</button>
+                    </div>
+                </div>
+            </div>
         {% else %}
             <div class="container">
                 <a href="{{ url_for('login') }}" class="btn btn-primary btn-sm">로그인</a>
@@ -189,6 +210,31 @@
         let currentThreadId = null;
         let isInitialized = false;
         const currentUser = '{{ current_user.username }}';  // 현재 사용자
+        let selectedMainUnit = '';  // 선택된 대단원
+        let selectedSubUnit = '';   // 선택된 소단원
+
+        // 소단원 데이터 정의
+        const subUnitData = {
+            "Ⅰ. 화학 반응의 규칙과 에너지 변화": [
+                "01. 물질 변화와 화학 반응식",
+                "02. 화학 반응의 규칙",
+                "03. 화학 반응에서의 에너지 출입"
+            ],
+            "Ⅱ. 기권과 날씨": [
+                "01. 기권과 지구 기온",
+                "02. 구름과 강수",
+                "03. 기압과 바람",
+                "04. 날씨의 변화"
+            ],
+            "Ⅲ. 운동과 에너지": [
+                "01. 운동",
+                "02. 일과 에너지"
+            ],
+            "Ⅳ. 자극과 반응": [
+                "01. 감각 기관",
+                "02. 신경계와 호르몬"
+            ]
+        };
 
         // 로그아웃 전 데이터 저장을 위한 이벤트 리스너
         window.addEventListener('beforeunload', () => {
@@ -305,10 +351,11 @@
                 try {
                     this.appendMessage(buttonText, 'text', 'user');
                     
-                    const startBtn = document.querySelector('.btn-primary');
-                    const laterBtn = document.querySelector('.btn-secondary');
-                    if (startBtn) startBtn.disabled = true;
-                    if (laterBtn) laterBtn.disabled = true;
+                    // 문제 출제 버튼만 비활성화하고 단원 선택 컨트롤은 비활성화하지 않음
+                    const quizButtons = document.querySelectorAll('.message.assistant .message-content .btn-primary, .message.assistant .message-content .btn-secondary');
+                    quizButtons.forEach(btn => {
+                        btn.disabled = true;
+                    });
                     
                     const loadingId = this.appendLoadingMessage();
 
@@ -329,21 +376,39 @@
                         }
                     }
 
+                    // 단원 필터 추가
+                    const requestData = {
+                        thread_id: this.threadId,
+                        message: buttonText
+                    };
+
+                    // 선택된 단원이 있으면 추가
+                    if (selectedMainUnit) {
+                        requestData.main_unit = selectedMainUnit;
+                    }
+                    if (selectedSubUnit) {
+                        requestData.sub_unit = selectedSubUnit;
+                    }
+
+                    console.log('요청 데이터:', requestData); // 디버깅용 로그 추가
+
                     const response = await fetch('/api/chat', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
                         },
-                        body: JSON.stringify({
-                            thread_id: this.threadId,
-                            message: buttonText
-                        })
+                        body: JSON.stringify(requestData)
                     });
                     
                     const data = await response.json();
                     console.log('서버 응답:', data);
                     
                     this.removeMessage(loadingId);
+                    
+                    // 문제 출제 버튼 다시 활성화
+                    quizButtons.forEach(btn => {
+                        btn.disabled = false;
+                    });
                     
                     if (data.error) {
                         this.appendMessage('퀴즈를 불러오는 중 오류가 발생했습니다.', 'text', 'assistant');
@@ -396,6 +461,12 @@
                 } catch (error) {
                     console.error('Error starting quiz:', error);
                     this.appendMessage('퀴즈를 시작하는 중 오류가 발생했습니다.', 'text', 'assistant');
+                    
+                    // 오류 발생 시에도 버튼 활성화
+                    const quizButtons = document.querySelectorAll('.message.assistant .message-content .btn-primary, .message.assistant .message-content .btn-secondary');
+                    quizButtons.forEach(btn => {
+                        btn.disabled = false;
+                    });
                 }
             },
 
@@ -465,6 +536,15 @@
                                 quizDiv.innerHTML = quizHTML;
                                 document.getElementById('chat-messages').appendChild(quizDiv);
                                 document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight;
+                                
+                                // 단원 선택 컨트롤 활성화 상태 유지
+                                const mainUnitSelect = document.getElementById('main-unit-select');
+                                const subUnitSelect = document.getElementById('sub-unit-select');
+                                const applyFilterBtn = document.getElementById('apply-unit-filter');
+                                
+                                if (mainUnitSelect) mainUnitSelect.disabled = false;
+                                if (subUnitSelect) subUnitSelect.disabled = false;
+                                if (applyFilterBtn) applyFilterBtn.disabled = false;
                             }, 1000);
                         } else {
                             // 모든 문제가 완료된 경우
@@ -486,6 +566,15 @@
                                 `;
                                 document.getElementById('chat-messages').appendChild(completionDiv);
                                 document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight;
+                                
+                                // 단원 선택 컨트롤 활성화 상태 유지
+                                const mainUnitSelect = document.getElementById('main-unit-select');
+                                const subUnitSelect = document.getElementById('sub-unit-select');
+                                const applyFilterBtn = document.getElementById('apply-unit-filter');
+                                
+                                if (mainUnitSelect) mainUnitSelect.disabled = false;
+                                if (subUnitSelect) subUnitSelect.disabled = false;
+                                if (applyFilterBtn) applyFilterBtn.disabled = false;
                             }, 1000);
                         }
                         
@@ -494,6 +583,15 @@
                 } catch (error) {
                     console.error('Error submitting answer:', error);
                     this.appendMessage('답안 제출 중 오류가 발생했습니다.', 'text', 'assistant');
+                    
+                    // 오류 발생 시에도 단원 선택 컨트롤 활성화 상태 유지
+                    const mainUnitSelect = document.getElementById('main-unit-select');
+                    const subUnitSelect = document.getElementById('sub-unit-select');
+                    const applyFilterBtn = document.getElementById('apply-unit-filter');
+                    
+                    if (mainUnitSelect) mainUnitSelect.disabled = false;
+                    if (subUnitSelect) subUnitSelect.disabled = false;
+                    if (applyFilterBtn) applyFilterBtn.disabled = false;
                 }
             },
 
@@ -710,8 +808,91 @@
             document.getElementById('reset-chat').addEventListener('click', () => {
                 if (confirm('모든 대화 내용이 삭제됩니다. 계속하시겠습니까?')) {
                     chatManager.resetChat();
+                    
+                    // 단원 선택 초기화
+                    const mainUnitSelect = document.getElementById('main-unit-select');
+                    const subUnitSelect = document.getElementById('sub-unit-select');
+                    if (mainUnitSelect) mainUnitSelect.value = '';
+                    if (subUnitSelect) {
+                        subUnitSelect.innerHTML = '<option value="">모든 소단원</option>';
+                    }
+                    selectedMainUnit = '';
+                    selectedSubUnit = '';
                 }
             });
+
+            // 대단원 선택 이벤트 리스너
+            const mainUnitSelect = document.getElementById('main-unit-select');
+            const subUnitSelect = document.getElementById('sub-unit-select');
+            
+            if (mainUnitSelect) {
+                mainUnitSelect.addEventListener('change', () => {
+                    const selectedMainUnit = mainUnitSelect.value;
+                    
+                    // 소단원 옵션 초기화
+                    subUnitSelect.innerHTML = '<option value="">모든 소단원</option>';
+                    
+                    // 선택된 대단원에 해당하는 소단원 옵션 추가
+                    if (selectedMainUnit && subUnitData[selectedMainUnit]) {
+                        subUnitData[selectedMainUnit].forEach(subUnit => {
+                            const option = document.createElement('option');
+                            option.value = subUnit;
+                            option.textContent = subUnit;
+                            subUnitSelect.appendChild(option);
+                        });
+                    }
+                });
+            }
+
+            // 단원 필터 적용 버튼 이벤트 리스너
+            const applyFilterBtn = document.getElementById('apply-unit-filter');
+            if (applyFilterBtn) {
+                applyFilterBtn.addEventListener('click', () => {
+                    selectedMainUnit = mainUnitSelect.value;
+                    selectedSubUnit = subUnitSelect.value;
+                    
+                    let message = '';
+                    if (selectedMainUnit && selectedSubUnit) {
+                        message = `${selectedMainUnit} - ${selectedSubUnit} 단원의 문제를 출제합니다.`;
+                    } else if (selectedMainUnit) {
+                        message = `${selectedMainUnit} 단원의 문제를 출제합니다.`;
+                    } else {
+                        message = '모든 단원의 문제를 출제합니다.';
+                    }
+                    
+                    // 메시지와 버튼을 함께 추가
+                    const messagesContainer = document.getElementById('chat-messages');
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message assistant';
+                    messageDiv.innerHTML = `
+                        <div class="message-content assistant-message">
+                            ${message}
+                        </div>
+                    `;
+                    messagesContainer.appendChild(messageDiv);
+                    
+                    // 버튼 추가
+                    const buttonDiv = document.createElement('div');
+                    buttonDiv.className = 'message assistant';
+                    buttonDiv.innerHTML = `
+                        <div class="message-content">
+                            <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('1문제 출제')">1문제 출제</button>
+                            <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('5문제 출제')">5문제 출제</button>
+                            <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('10문제 출제')">10문제 출제</button>
+                            <button class="btn btn-secondary" onclick="chatManager.endQuiz()">나중에 하기</button>
+                        </div>
+                    `;
+                    messagesContainer.appendChild(buttonDiv);
+                    
+                    // 스크롤을 최하단으로 이동
+                    requestAnimationFrame(() => {
+                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                    });
+                    
+                    // 메시지 저장
+                    chatManager.saveMessages();
+                });
+            }
         });
     </script>
 </body>
