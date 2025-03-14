@@ -356,8 +356,8 @@
                         quizDiv.className = 'message assistant';
                         
                         // 현재 문제와 총 문제 수 설정
-                        const currentQuestion = data.progress ? data.progress.current : (data.current_question + 1);
-                        const totalQuestions = data.progress ? data.progress.total : data.total_questions;
+                        const currentQuestion = data.progress ? data.progress.current : 1;
+                        const totalQuestions = data.progress ? data.progress.total : 1;
                         const quiz = data.quiz || (data.questions && data.questions[0]);
                         
                         if (!quiz) {
@@ -370,7 +370,8 @@
                         quizHTML += `
                             <div class="mb-4 p-3" style="border: 1px solid #dee2e6; border-radius: 10px;">
                                 <div class="badge bg-secondary mb-2">${currentQuestion}/${totalQuestions}번 문제</div>
-                                <div class="badge bg-primary ms-2">${quiz.unit}</div>
+                                <div class="badge bg-primary ms-2">${quiz.main_unit || quiz.unit || '과학'}</div>
+                                <div class="badge bg-info ms-2">${quiz.sub_unit || ''}</div>
                                 <div class="mt-2 mb-3">${quiz.question}</div>
                                 <div class="quiz-options" style="display: grid; gap: 0.3rem; margin-top: 0.5rem;">
                                     ${quiz.options.map((option, optionIndex) => `
@@ -444,7 +445,8 @@
                                 quizHTML += `
                                     <div class="mb-4 p-3" style="border: 1px solid #dee2e6; border-radius: 10px;">
                                         <div class="badge bg-secondary mb-2">${data.next_question.progress.current}/${data.next_question.progress.total}번 문제</div>
-                                        <div class="badge bg-primary ms-2">${data.next_question.quiz.unit}</div>
+                                        <div class="badge bg-primary ms-2">${data.next_question.quiz.main_unit || data.next_question.quiz.unit || '과학'}</div>
+                                        <div class="badge bg-info ms-2">${data.next_question.quiz.sub_unit || ''}</div>
                                         <div class="mt-2 mb-3">${data.next_question.quiz.question}</div>
                                         <div class="quiz-options" style="display: grid; gap: 0.3rem; margin-top: 0.5rem;">
                                             ${data.next_question.quiz.options.map((option, optionIndex) => `
@@ -610,7 +612,8 @@
                         <div class="quiz-message">
                             <div class="mb-4 p-3" style="border: 1px solid #dee2e6; border-radius: 10px;">
                                 <div class="badge bg-secondary mb-2">${currentQuestion}/${totalQuestions}번 문제</div>
-                                <div class="badge bg-primary ms-2">${content.unit || '과학'}</div>
+                                <div class="badge bg-primary ms-2">${content.main_unit || content.unit || '과학'}</div>
+                                <div class="badge bg-info ms-2">${content.sub_unit || ''}</div>
                                 <div class="mt-2 mb-3">${content.question}</div>
                                 <div class="quiz-options" style="display: grid; gap: 0.3rem; margin-top: 0.5rem;">
                                     ${content.options.map((option, optionIndex) => `

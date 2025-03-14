@@ -31,11 +31,13 @@ class User(UserMixin, db.Model):
 class Answer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    unit = db.Column(db.String(100), nullable=False)
+    main_unit = db.Column(db.String(100), nullable=True)  # 대단원
+    sub_unit = db.Column(db.String(100), nullable=True)   # 소단원
+    unit = db.Column(db.String(100), nullable=True)       # 기존 단원 필드 (하위 호환성 유지)
     question = db.Column(db.Text, nullable=False)
     user_answer = db.Column(db.String(10), nullable=False)
     is_correct = db.Column(db.Boolean, nullable=False)
     timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 def init_db():
-    db.create_all() 
+    db.create_all()

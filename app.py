@@ -22,6 +22,17 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 # Flask 설정
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'dev')
 
+# 데이터베이스 파일 경로 설정
+db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'quiz.db')
+
+# 기존 데이터베이스 파일 삭제 (SQLite인 경우)
+if os.path.exists(db_path):
+    try:
+        os.remove(db_path)
+        print(f"기존 데이터베이스 파일 {db_path}가 삭제되었습니다.")
+    except Exception as e:
+        print(f"데이터베이스 파일 삭제 중 오류: {e}")
+
 # PostgreSQL 설정
 if os.environ.get('DATABASE_URL'):
     database_url = os.environ.get('DATABASE_URL')
@@ -30,7 +41,7 @@ if os.environ.get('DATABASE_URL'):
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 else:
     # 로컬 개발용 SQLite
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///quiz.db'
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -45,13 +56,19 @@ db.init_app(app)
 
 # 앱 컨텍스트 내에서 데이터베이스 생성
 with app.app_context():
+    # 테이블 생성
     db.create_all()
+    
     # 관리자 계정이 없는 경우 생성
     if not User.query.filter_by(username='admin').first():
         admin = User(username='admin')
         admin.set_password('admin123')
+        admin.is_admin = True  # 관리자 권한 부여
         db.session.add(admin)
         db.session.commit()
+        print("관리자 계정이 생성되었습니다.")
+    
+    print("데이터베이스가 초기화되었습니다.")
 
 # API 키 확인
 api_key = os.getenv('OPENAI_API_KEY')
@@ -88,9 +105,10 @@ class ScienceQuizBot:
   "type": "QUIZ",
   "questions": [
     {{
-      "unit": "단원명",
+      "main_unit": "대단원명",
+      "sub_unit": "소단원명",
       "question": "문제 내용",
-      "options": ["보기1", "보기2", "보기3", "보기4", "보기5"],
+      "options": ["① 보기1", "② 보기2", "③ 보기3", "④ 보기4", "⑤ 보기5"],
       "correct": "정답",
       "type": "용어 정의",
       "explanation": "해설"
@@ -100,7 +118,7 @@ class ScienceQuizBot:
 
 중요 규칙:
 1. questions 배열에 정확히 {question_count}개의 문제가 있어야 합니다.
-2. 각 문제는 반드시 unit, question, options, correct, type, explanation 필드를 모두 포함해야 합니다.
+2. 각 문제는 반드시 main_unit, sub_unit, question, options, correct, type, explanation 필드를 모두 포함해야 합니다.
 3. options 배열은 정확히 5개의 보기를 포함해야 합니다.
 4. correct는 반드시 options 배열의 요소 중 하나와 정확히 일치해야 합니다."""
 
@@ -310,10 +328,13 @@ def login():
 
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
+    # 이미 로그인한 경우 처리
     if current_user.is_authenticated:
         if current_user.username == 'admin':
             return redirect(url_for('admin_dashboard'))
-        return redirect(url_for('quiz_page'))
+        else:
+            # 일반 사용자는 퀴즈 페이지로 리디렉션
+            return redirect(url_for('quiz_page'))
     
     if request.method == 'POST':
         username = request.form.get('username')
@@ -326,9 +347,10 @@ def admin_login():
         user = User.query.filter_by(username=username).first()
         
         if user and user.check_password(password):
+            # 관리자 로그인 성공
             login_user(user)
-            next_page = request.args.get('next')
-            return redirect(next_page or url_for('admin_dashboard'))
+            print("관리자 로그인 성공, 대시보드로 리디렉션")
+            return redirect(url_for('admin_dashboard'))
         else:
             flash('아이디 또는 비밀번호가 올바르지 않습니다.', 'error')
     
@@ -386,8 +408,15 @@ def new_quiz():
             
             # 단일 문제인 경우
             current_quiz_store[thread_id] = response.get('questions')[0]
-            response['thread_id'] = thread_id
-            return jsonify(response)
+            return jsonify({
+                'type': 'QUIZ',
+                'quiz': response.get('questions')[0],
+                'progress': {
+                    'current': 1,
+                    'total': 1
+                },
+                'thread_id': thread_id
+            })
         else:
             raise ValueError("Invalid quiz format")
             
@@ -469,7 +498,11 @@ def chat():
                     current_quiz_store[thread_id] = response['questions'][0]
                     return jsonify({
                         'type': 'QUIZ',
-                        'quiz': response['questions'][0]
+                        'quiz': response['questions'][0],
+                        'progress': {
+                            'current': 1,
+                            'total': 1
+                        }
                     })
             return jsonify(response)
             
@@ -488,7 +521,9 @@ def chat():
                     if current_user.is_authenticated:
                         answer = Answer(
                             user_id=current_user.id,
-                            unit=current_question['unit'],
+                            main_unit=current_question.get('main_unit', ''),
+                            sub_unit=current_question.get('sub_unit', ''),
+                            unit=current_question.get('main_unit', ''),  # 하위 호환성 유지
                             question=current_question['question'],
                             user_answer=message,
                             is_correct=response['answer'].get('correct', False),
@@ -498,7 +533,8 @@ def chat():
                         db.session.commit()
                         
                         print("=== 답변 저장 완료 ===")
-                        print(f"단원: {current_question['unit']}")
+                        print(f"대단원: {current_question.get('main_unit', '')}")
+                        print(f"소단원: {current_question.get('sub_unit', '')}")
                         print(f"정답여부: {response['answer'].get('correct')}")
                     
                     if current_index + 1 < total_questions:
@@ -520,7 +556,9 @@ def chat():
                     if current_user.is_authenticated:
                         answer = Answer(
                             user_id=current_user.id,
-                            unit=current_quiz['unit'],
+                            main_unit=current_quiz.get('main_unit', ''),
+                            sub_unit=current_quiz.get('sub_unit', ''),
+                            unit=current_quiz.get('main_unit', ''),  # 하위 호환성 유지
                             question=current_quiz['question'],
                             user_answer=message,
                             is_correct=response['answer'].get('correct', False),
@@ -530,7 +568,8 @@ def chat():
                         db.session.commit()
                         
                         print("=== 답변 저장 완료 ===")
-                        print(f"단원: {current_quiz['unit']}")
+                        print(f"대단원: {current_quiz.get('main_unit', '')}")
+                        print(f"소단원: {current_quiz.get('sub_unit', '')}")
                         print(f"정답여부: {response['answer'].get('correct')}")
             
             return jsonify(response)
@@ -561,9 +600,15 @@ def chat():
 @app.route('/admin')
 @login_required
 def admin_dashboard():
+    # 관리자가 아닌 경우 접근 제한
     if current_user.username != 'admin':
         flash('관리자 권한이 필요합니다.', 'error')
-        return redirect(url_for('admin_login'))
+        return redirect(url_for('login'))
+    
+    print("관리자 대시보드 접근")
+    
+    # Answer 모델의 컬럼 확인
+    print("Answer 모델 컬럼:", [column.name for column in Answer.__table__.columns])
         
     try:
         # 전체 학생 목록 조회 (admin 제외)
@@ -575,59 +620,109 @@ def admin_dashboard():
         # 전체 학생 수
         total_students = len(students)
         
-        # 총 문제 풀이 수와 정답 수 (전체)
-        total_answers = Answer.query.count()
-        total_correct = Answer.query.filter_by(is_correct=True).count()
-        
-        # 전체 정답률
-        accuracy_rate = (total_correct / total_answers * 100) if total_answers > 0 else 0
+        # 안전하게 쿼리 실행
+        try:
+            # 총 문제 풀이 수와 정답 수 (전체)
+            total_answers = Answer.query.count()
+            total_correct = Answer.query.filter_by(is_correct=True).count()
+            
+            # 전체 정답률
+            accuracy_rate = (total_correct / total_answers * 100) if total_answers > 0 else 0
+        except Exception as e:
+            print(f"통계 쿼리 오류: {e}")
+            total_answers = 0
+            total_correct = 0
+            accuracy_rate = 0
         
         # 평균 학습 진도율 계산 (100문제 기준)
-        student_progress = db.session.query(
-            User.id,
-            func.count(Answer.id).label('total_answers')
-        ).join(Answer, User.id == Answer.user_id)\
-         .filter(User.username != 'admin')\
-         .group_by(User.id).all()
-        
-        progress_count = len(student_progress)
-        if progress_count > 0:
-            total_progress = sum(min(total/100 * 100, 100) for _, total in student_progress)
-            average_progress = total_progress / progress_count
-        else:
+        try:
+            student_progress = db.session.query(
+                User.id,
+                func.count(Answer.id).label('total_answers')
+            ).join(Answer, User.id == Answer.user_id)\
+             .filter(User.username != 'admin')\
+             .group_by(User.id).all()
+            
+            progress_count = len(student_progress)
+            if progress_count > 0:
+                total_progress = sum(min(total/100 * 100, 100) for _, total in student_progress)
+                average_progress = total_progress / progress_count
+            else:
+                average_progress = 0
+        except Exception as e:
+            print(f"진도율 계산 오류: {e}")
             average_progress = 0
         
-        # 단원별 통계 쿼리
-        unit_stats_query = db.session.query(
-            Answer.unit,
-            func.count(Answer.id).label('attempts'),
-            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-            func.count(distinct(Answer.user_id)).label('unique_students')
-        )
-        
-        # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
-        if selected_student_id:
-            unit_stats_query = unit_stats_query.filter(Answer.user_id == selected_student_id)
-        
-        unit_stats = unit_stats_query.group_by(Answer.unit).all()
-        
-        unit_stats = [{
-            'name': stat.unit,
-            'total_questions': 100,
-            'attempts': stat.attempts,
-            'correct': stat.correct,
-            'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
-            'unique_students': stat.unique_students if not selected_student_id else 1
-        } for stat in unit_stats]
+        # 단원별 통계 쿼리 - main_unit과 sub_unit 필드 모두 사용
+        try:
+            unit_stats_query = db.session.query(
+                Answer.main_unit,
+                Answer.sub_unit,
+                func.count(Answer.id).label('attempts'),
+                func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
+                func.count(distinct(Answer.user_id)).label('unique_students')
+            )
+            
+            # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
+            if selected_student_id:
+                unit_stats_query = unit_stats_query.filter(Answer.user_id == selected_student_id)
+            
+            # main_unit과 sub_unit으로 그룹화
+            unit_stats = unit_stats_query.group_by(Answer.main_unit, Answer.sub_unit).all()
+            
+            # main_unit이 없는 경우 unit 필드 사용
+            unit_stats = [{
+                'main_unit': stat.main_unit or stat[0] or '미분류',
+                'sub_unit': stat.sub_unit or stat[1] or '',
+                'name': f"{stat.main_unit or stat[0] or '미분류'} - {stat.sub_unit or stat[1] or ''}",
+                'total_questions': 100,
+                'attempts': stat.attempts,
+                'correct': stat.correct,
+                'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+                'unique_students': stat.unique_students if not selected_student_id else 1
+            } for stat in unit_stats]
+        except Exception as e:
+            print(f"단원별 통계 쿼리 오류: {e}")
+            # 대체 쿼리: unit 필드만 사용
+            try:
+                unit_stats_query = db.session.query(
+                    Answer.unit,
+                    func.count(Answer.id).label('attempts'),
+                    func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
+                    func.count(distinct(Answer.user_id)).label('unique_students')
+                )
+                
+                if selected_student_id:
+                    unit_stats_query = unit_stats_query.filter(Answer.user_id == selected_student_id)
+                
+                unit_stats = unit_stats_query.group_by(Answer.unit).all()
+                
+                unit_stats = [{
+                    'main_unit': stat.unit or '미분류',
+                    'sub_unit': '',
+                    'name': stat.unit or '미분류',
+                    'total_questions': 100,
+                    'attempts': stat.attempts,
+                    'correct': stat.correct,
+                    'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+                    'unique_students': stat.unique_students if not selected_student_id else 1
+                } for stat in unit_stats]
+            except Exception as e2:
+                print(f"대체 단원별 통계 쿼리 오류: {e2}")
+                unit_stats = []
         
         # 학생별 통계 (단원별 통계와 독립적)
-        student_stats = db.session.query(
-            User,
-            func.count(Answer.id).label('total'),
-            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct')
-        ).join(Answer, User.id == Answer.user_id)\
-         .filter(User.username != 'admin')\
-         .group_by(User.id).all()
+        try:
+            student_stats = db.session.query(
+                User,
+                func.count(Answer.id).label('total'),
+                func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct')
+            ).join(Answer, User.id == Answer.user_id)\
+             .filter(User.username != 'admin')\
+             .group_by(User.id).all()
+        except Exception as e:
+            print(f"학생별 통계 쿼리 오류: {e}")
+            student_stats = []
         
         return render_template('admin.html',
                              students=students,
@@ -641,8 +736,10 @@ def admin_dashboard():
                              
     except Exception as e:
         print(f"Error in admin_dashboard: {str(e)}")
+        import traceback
+        traceback.print_exc()  # 상세 오류 정보 출력
         flash('대시보드 로딩 중 오류가 발생했습니다.', 'error')
-        return redirect(url_for('admin_login'))
+        return redirect(url_for('login'))
 
 @app.route('/logout')
 @login_required
@@ -661,9 +758,9 @@ def logout():
 @app.route('/admin/users')
 @login_required
 def user_management():
-    if current_user.username != 'admin':
+    if not current_user.is_authenticated or current_user.username != 'admin':
         flash('관리자 권한이 필요합니다.', 'error')
-        return redirect(url_for('admin_login'))
+        return redirect(url_for('login'))
         
     users = User.query.all()
     return render_template('user_management.html', users=users)
@@ -671,9 +768,9 @@ def user_management():
 @app.route('/admin/users/add', methods=['POST'])
 @login_required
 def add_user():
-    if current_user.username != 'admin':
+    if not current_user.is_authenticated or current_user.username != 'admin':
         flash('관리자 권한이 필요합니다.', 'error')
-        return redirect(url_for('admin_login'))
+        return redirect(url_for('login'))
         
     username = request.form.get('username')
     password = request.form.get('password')
@@ -813,37 +910,72 @@ def standardize_unit_names():
 def download_unit_stats():
     if current_user.username != 'admin':
         flash('관리자 권한이 필요합니다.', 'error')
-        return redirect(url_for('admin_login'))
+        return redirect(url_for('login'))
         
     student_id = request.args.get('student_id')
     
-    # 단원별 통계 쿼리
-    query = db.session.query(
-        Answer.unit,
-        func.count(Answer.id).label('attempts'),
-        func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-        func.count(distinct(Answer.user_id)).label('unique_students')
-    )
-    
-    if student_id:
-        query = query.filter(Answer.user_id == student_id)
-    
-    unit_stats = query.group_by(Answer.unit).all()
-    
-    # 선택된 학생 정보
-    selected_student = User.query.get(student_id) if student_id else None
-    
-    html = render_template('stats_report.html',
-                         generated_at=datetime.utcnow(),
-                         report_type='unit',
-                         selected_student=selected_student,
-                         unit_stats=[{
-                             'name': stat.unit,
-                             'attempts': stat.attempts,
-                             'correct': stat.correct,
-                             'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
-                             'unique_students': stat.unique_students
-                         } for stat in unit_stats])
+    try:
+        # 단원별 통계 쿼리 - main_unit과 sub_unit 필드 모두 사용
+        query = db.session.query(
+            Answer.main_unit,
+            Answer.sub_unit,
+            func.count(Answer.id).label('attempts'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
+            func.count(distinct(Answer.user_id)).label('unique_students')
+        )
+        
+        if student_id:
+            query = query.filter(Answer.user_id == student_id)
+        
+        unit_stats = query.group_by(Answer.main_unit, Answer.sub_unit).all()
+        
+        # 선택된 학생 정보
+        selected_student = User.query.get(student_id) if student_id else None
+        
+        html = render_template('stats_report.html',
+                             generated_at=datetime.utcnow(),
+                             report_type='unit',
+                             selected_student=selected_student,
+                             unit_stats=[{
+                                 'main_unit': stat.main_unit or '미분류',
+                                 'sub_unit': stat.sub_unit or '',
+                                 'name': f"{stat.main_unit or '미분류'} - {stat.sub_unit or ''}",
+                                 'attempts': stat.attempts,
+                                 'correct': stat.correct,
+                                 'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+                                 'unique_students': stat.unique_students
+                             } for stat in unit_stats])
+    except Exception as e:
+        print(f"단원별 통계 다운로드 오류: {e}")
+        # 대체 쿼리: unit 필드만 사용
+        query = db.session.query(
+            Answer.unit,
+            func.count(Answer.id).label('attempts'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
+            func.count(distinct(Answer.user_id)).label('unique_students')
+        )
+        
+        if student_id:
+            query = query.filter(Answer.user_id == student_id)
+        
+        unit_stats = query.group_by(Answer.unit).all()
+        
+        # 선택된 학생 정보
+        selected_student = User.query.get(student_id) if student_id else None
+        
+        html = render_template('stats_report.html',
+                             generated_at=datetime.utcnow(),
+                             report_type='unit',
+                             selected_student=selected_student,
+                             unit_stats=[{
+                                 'main_unit': stat.unit or '미분류',
+                                 'sub_unit': '',
+                                 'name': stat.unit or '미분류',
+                                 'attempts': stat.attempts,
+                                 'correct': stat.correct,
+                                 'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+                                 'unique_students': stat.unique_students
+                             } for stat in unit_stats])
     
     response = make_response(html)
     response.headers['Content-Type'] = 'text/html'
@@ -879,16 +1011,48 @@ def download_student_stats():
 def download_statistics():
     if current_user.username != 'admin':
         flash('관리자 권한이 필요합니다.', 'error')
-        return redirect(url_for('admin_login'))
+        return redirect(url_for('login'))
         
-    # 전체 통계 (단원별 + 학생별)
-    unit_stats = db.session.query(
-        Answer.unit,
-        func.count(Answer.id).label('attempts'),
-        func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-        func.count(distinct(Answer.user_id)).label('unique_students')
-    ).group_by(Answer.unit).all()
+    try:
+        # 전체 통계 (단원별 + 학생별) - main_unit과 sub_unit 필드 모두 사용
+        unit_stats = db.session.query(
+            Answer.main_unit,
+            Answer.sub_unit,
+            func.count(Answer.id).label('attempts'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
+            func.count(distinct(Answer.user_id)).label('unique_students')
+        ).group_by(Answer.main_unit, Answer.sub_unit).all()
+        
+        unit_stats_data = [{
+            'main_unit': stat.main_unit or '미분류',
+            'sub_unit': stat.sub_unit or '',
+            'name': f"{stat.main_unit or '미분류'} - {stat.sub_unit or ''}",
+            'attempts': stat.attempts,
+            'correct': stat.correct,
+            'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+            'unique_students': stat.unique_students
+        } for stat in unit_stats]
+    except Exception as e:
+        print(f"단원별 통계 다운로드 오류: {e}")
+        # 대체 쿼리: unit 필드만 사용
+        unit_stats = db.session.query(
+            Answer.unit,
+            func.count(Answer.id).label('attempts'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
+            func.count(distinct(Answer.user_id)).label('unique_students')
+        ).group_by(Answer.unit).all()
+        
+        unit_stats_data = [{
+            'main_unit': stat.unit or '미분류',
+            'sub_unit': '',
+            'name': stat.unit or '미분류',
+            'attempts': stat.attempts,
+            'correct': stat.correct,
+            'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+            'unique_students': stat.unique_students
+        } for stat in unit_stats]
     
+    # 학생별 통계
     student_stats = db.session.query(
         User,
         func.count(Answer.id).label('total'),
@@ -898,19 +1062,46 @@ def download_statistics():
     html = render_template('stats_report.html',
                          generated_at=datetime.utcnow(),
                          report_type='both',
-                         unit_stats=[{
-                             'name': stat.unit,
-                             'attempts': stat.attempts,
-                             'correct': stat.correct,
-                             'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
-                             'unique_students': stat.unique_students
-                         } for stat in unit_stats],
+                         unit_stats=unit_stats_data,
                          student_stats=student_stats)
     
     response = make_response(html)
     response.headers['Content-Type'] = 'text/html'
     response.headers['Content-Disposition'] = f'attachment; filename=statistics_report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.html'
     return response
+
+@app.route('/admin/reset-database', methods=['GET', 'POST'])
+@login_required
+def reset_database():
+    if current_user.username != 'admin':
+        flash('관리자 권한이 필요합니다.', 'error')
+        return redirect(url_for('login'))
+    
+    if request.method == 'POST':
+        try:
+            # 모든 답변 기록 삭제
+            Answer.query.delete()
+            
+            # 관리자를 제외한 모든 사용자 삭제
+            User.query.filter(User.username != 'admin').delete()
+            
+            db.session.commit()
+            
+            # 앱 재시작 필요 메시지
+            flash('데이터베이스가 초기화되었습니다. 변경사항을 완전히 적용하려면 서버를 재시작하세요.', 'success')
+            
+            # 데이터베이스 파일 경로
+            db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'quiz.db')
+            
+            # 서버 재시작 안내 메시지
+            return render_template('restart_server.html', db_path=db_path)
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error resetting database: {str(e)}")
+            flash('데이터베이스 초기화 중 오류가 발생했습니다.', 'error')
+            return redirect(url_for('admin_dashboard'))
+    
+    return render_template('reset_database.html')
 
 if __name__ == '__main__':
     app.run(debug=True)

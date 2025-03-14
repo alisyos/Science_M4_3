@@ -54,28 +54,26 @@
         {% if selected_student %}
         <p>학생: {{ selected_student.username }}</p>
         {% endif %}
-        <table>
+        <table class="table table-bordered">
             <thead>
                 <tr>
-                    <th>단원</th>
-                    <th>풀이 횟수</th>
+                    <th>대단원</th>
+                    <th>소단원</th>
+                    <th>시도 횟수</th>
                     <th>정답 수</th>
                     <th>정답률</th>
-                    {% if not selected_student %}
-                    <th>참여 학생 수</th>
-                    {% endif %}
+                    <th>학생 수</th>
                 </tr>
             </thead>
             <tbody>
                 {% for stat in unit_stats %}
                 <tr>
-                    <td>{{ stat.name }}</td>
+                    <td>{{ stat.main_unit }}</td>
+                    <td>{{ stat.sub_unit }}</td>
                     <td>{{ stat.attempts }}</td>
                     <td>{{ stat.correct }}</td>
                     <td>{{ "%.1f"|format(stat.accuracy_rate) }}%</td>
-                    {% if not selected_student %}
                     <td>{{ stat.unique_students }}</td>
-                    {% endif %}
                 </tr>
                 {% endfor %}
             </tbody>

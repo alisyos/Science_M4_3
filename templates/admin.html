@@ -65,28 +65,26 @@
     </div>
     <div class="card-body">
         <div class="table-responsive">
-            <table class="table table-hover">
+            <table class="table table-striped">
                 <thead>
                     <tr>
-                        <th>단원</th>
-                        <th>풀이 횟수</th>
+                        <th>대단원</th>
+                        <th>소단원</th>
+                        <th>시도 횟수</th>
                         <th>정답 수</th>
                         <th>정답률</th>
-                        {% if not selected_student_id %}
-                        <th>참여 학생 수</th>
-                        {% endif %}
+                        <th>학생 수</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for stat in unit_stats %}
                     <tr>
-                        <td>{{ stat.name }}</td>
+                        <td>{{ stat.main_unit }}</td>
+                        <td>{{ stat.sub_unit }}</td>
                         <td>{{ stat.attempts }}</td>
                         <td>{{ stat.correct }}</td>
                         <td>{{ "%.1f"|format(stat.accuracy_rate) }}%</td>
-                        {% if not selected_student_id %}
                         <td>{{ stat.unique_students }}</td>
-                        {% endif %}
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -148,6 +146,27 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+    </div>
+</div>
+
+<!-- 관리 도구 섹션 추가 -->
+<div class="card mt-4">
+    <div class="card-header bg-dark text-white">
+        <h5 class="mb-0"><i class="fas fa-tools me-2"></i>관리 도구</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <a href="{{ url_for('user_management') }}" class="btn btn-primary w-100 mb-2">
+                    <i class="fas fa-users me-2"></i>사용자 관리
+                </a>
+            </div>
+            <div class="col-md-6">
+                <a href="{{ url_for('reset_database') }}" class="btn btn-danger w-100 mb-2">
+                    <i class="fas fa-database me-2"></i>데이터베이스 초기화
+                </a>
+            </div>
         </div>
     </div>
 </div>
