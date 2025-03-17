@@ -65,13 +65,13 @@
     </div>
     <div class="card-body">
         <div class="table-responsive">
-            <table class="table table-striped">
+            <table class="table table-striped table-hover">
                 <thead>
                     <tr>
-                        <th>대단원</th>
-                        <th>소단원</th>
-                        <th>시도 횟수</th>
-                        <th>정답 수</th>
+                        <th>과목</th>
+                        <th>학년</th>
+                        <th>단원</th>
+                        <th>문제 수</th>
                         <th>정답률</th>
                         <th>학생 수</th>
                     </tr>
@@ -79,10 +79,10 @@
                 <tbody>
                     {% for stat in unit_stats %}
                     <tr>
-                        <td>{{ stat.main_unit }}</td>
-                        <td>{{ stat.sub_unit }}</td>
+                        <td>{{ stat.subject }}</td>
+                        <td>{{ stat.grade }}</td>
+                        <td>{{ stat.unit }}</td>
                         <td>{{ stat.attempts }}</td>
-                        <td>{{ stat.correct }}</td>
                         <td>{{ "%.1f"|format(stat.accuracy_rate) }}%</td>
                         <td>{{ stat.unique_students }}</td>
                     </tr>
@@ -242,6 +242,62 @@ document.getElementById('standardizeUnits').addEventListener('click', function()
             console.error('Error:', error);
             alert('오류가 발생했습니다.');
         });
+    }
+});
+
+// 단원별 통계 차트
+var unitStatsCtx = document.getElementById('unitStatsChart').getContext('2d');
+var unitStatsData = {
+    labels: [
+        {% for stat in unit_stats %}
+            '{{ stat.subject }} - {{ stat.grade }} - {{ stat.unit }}',
+        {% endfor %}
+    ],
+    datasets: [{
+        label: '정답률',
+        data: [
+            {% for stat in unit_stats %}
+                {{ stat.accuracy_rate }},
+            {% endfor %}
+        ],
+        backgroundColor: 'rgba(54, 162, 235, 0.5)',
+        borderColor: 'rgba(54, 162, 235, 1)',
+        borderWidth: 1
+    }]
+};
+var unitStatsChart = new Chart(unitStatsCtx, {
+    type: 'bar',
+    data: unitStatsData,
+    options: {
+        scales: {
+            y: {
+                beginAtZero: true,
+                max: 100,
+                title: {
+                    display: true,
+                    text: '정답률 (%)'
+                }
+            },
+            x: {
+                title: {
+                    display: true,
+                    text: '과목-학년-단원'
+                }
+            }
+        },
+        plugins: {
+            title: {
+                display: true,
+                text: '단원별 정답률'
+            },
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        return '정답률: ' + context.raw.toFixed(1) + '%';
+                    }
+                }
+            }
+        }
     }
 });
 </script>

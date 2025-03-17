@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import os
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_login import UserMixin
+import re
 
 # 환경 변수 로드
 load_dotenv()
@@ -481,169 +482,288 @@ def submit_answer():
 @login_required
 def chat():
     try:
-        data = request.get_json()
-        message = data.get('message', '').strip()
+        data = request.json
+        message = data.get('message', '')
         thread_id = data.get('thread_id')
-        is_quiz_answer = data.get('is_quiz_answer', False)  # 퀴즈 답변 여부 확인
+        is_quiz_answer = data.get('is_quiz_answer', False)
         
-        # 단원 필터 추가
-        main_unit = data.get('main_unit')
-        sub_unit = data.get('sub_unit')
+        # 새로운 필터링 파라미터 가져오기
+        subject = data.get('subject')
+        grade = data.get('grade')
+        unit = data.get('unit')
         
         print("=== 받은 메시지 ===")
         print(message)
         print(f"Thread ID: {thread_id}")
         print(f"Is Quiz Answer: {is_quiz_answer}")
-        print(f"대단원 필터: {main_unit}")
-        print(f"소단원 필터: {sub_unit}")
+        print(f"과목 필터: {subject}")
+        print(f"학년 필터: {grade}")
+        print(f"단원 필터: {unit}")
+        
+        # 기존 호환성을 위한 변수들
+        main_unit = data.get('main_unit')
+        sub_unit = data.get('sub_unit')
         
         if not thread_id:
-            return jsonify({
-                'type': 'ERROR',
-                'message': '유효하지 않은 세션입니다.'
-            }), 400
+            return jsonify({"error": "Thread ID is required"}), 400
         
-        # 문제 수 확인
-        question_count = None
-        if '문제 출제' in message:
-            if '1문제' in message:
-                question_count = 1
-            elif '5문제' in message:
-                question_count = 5
-            elif '10문제' in message:
-                question_count = 10
+        # 퀴즈 답변 처리
+        if is_quiz_answer:
+            # 현재 퀴즈 정보 가져오기
+            current_quiz = current_quiz_store.get(thread_id)
+            if not current_quiz:
+                return jsonify({"error": "Quiz not found"}), 404
+            
+            # 답변 체크
+            result = quiz_bot.check_answer(message, thread_id)
+            
+            if result.get('type') == 'ANSWER':
+                # 사용자 답변 저장
+                try:
+                    if isinstance(current_quiz, dict) and 'questions' in current_quiz:
+                        # 여러 문제 중 현재 문제
+                        current_index = current_quiz.get('current_index', 0)
+                        question = current_quiz['questions'][current_index]
+                        
+                        # 다음 문제 인덱스 계산
+                        next_index = current_index + 1
+                        has_next = next_index < len(current_quiz['questions'])
+                        
+                        # 현재 문제 정보 저장
+                        answer = Answer(
+                            user_id=current_user.id,
+                            main_unit=question.get('main_unit'),
+                            sub_unit=question.get('sub_unit'),
+                            unit=question.get('unit') or question.get('main_unit'),
+                            subject=question.get('subject'),
+                            grade=question.get('grade'),
+                            question=question.get('question'),
+                            user_answer=message,
+                            is_correct=result['answer'].get('correct', False)
+                        )
+                        db.session.add(answer)
+                        db.session.commit()
+                        
+                        # 다음 문제가 있는 경우
+                        if has_next:
+                            # 현재 인덱스 업데이트
+                            current_quiz['current_index'] = next_index
+                            next_question = current_quiz['questions'][next_index]
+                            
+                            # 다음 문제 정보 추가
+                            result['next_question'] = {
+                                'quiz': next_question,
+                                'progress': {
+                                    'current': next_index + 1,
+                                    'total': len(current_quiz['questions'])
+                                }
+                            }
+                    else:
+                        # 단일 문제인 경우
+                        answer = Answer(
+                            user_id=current_user.id,
+                            main_unit=current_quiz.get('main_unit'),
+                            sub_unit=current_quiz.get('sub_unit'),
+                            unit=current_quiz.get('unit') or current_quiz.get('main_unit'),
+                            subject=current_quiz.get('subject'),
+                            grade=current_quiz.get('grade'),
+                            question=current_quiz.get('question'),
+                            user_answer=message,
+                            is_correct=result['answer'].get('correct', False)
+                        )
+                        db.session.add(answer)
+                        db.session.commit()
+                except Exception as e:
+                    print(f"Error saving answer: {str(e)}")
+                    db.session.rollback()
+                
+                return jsonify(result)
+        
+        # 퀴즈 요청 패턴 확인
+        quiz_request_pattern = r'(\d+)문제\s*(출제|내줘|주세요|풀고싶어요|풀래요|풀어볼래요)'
+        match = re.search(quiz_request_pattern, message)
+        
+        if match:
+            question_count = int(match.group(1))
             print(f"=== 요청된 문제 수: {question_count} ===")
-        
-        # 현재 진행 중인 퀴즈가 있는지 확인
-        current_quiz = current_quiz_store.get(thread_id)
-        
-        if question_count is not None:
-            print(f"=== {question_count}문제 출제 시작 ===")
-            print(f"대단원 필터: {main_unit}")
-            print(f"소단원 필터: {sub_unit}")
+            print(f"=== {message} 시작 ===")
+            print(f"과목 필터: {subject}")
+            print(f"학년 필터: {grade}")
+            print(f"단원 필터: {unit}")
             
-            response = quiz_bot.get_quiz(thread_id, question_count, main_unit, sub_unit)
-            
-            if question_count > 1 and 'questions' in response:
-                # 첫 번째 문제 반환
-                first_question = response['questions'][0]
-                current_quiz_store[thread_id] = {
-                    'questions': response['questions'],
-                    'current_index': 0,
-                    'total_questions': question_count
-                }
-                return jsonify({
-                    'type': 'QUIZ',
-                    'quiz': first_question,
-                    'progress': {
-                        'current': 1,
-                        'total': question_count
-                    }
-                })
+            # 프롬프트 구성
+            prompt = ""
+            if subject and grade and unit:
+                prompt = f"{subject} {grade} {unit} 단원 관련 문제를 {question_count}개 출제해주세요."
+            elif subject and grade:
+                prompt = f"{subject} {grade} 학년 관련 문제를 {question_count}개 출제해주세요."
+            elif subject:
+                prompt = f"{subject} 과목 관련 문제를 {question_count}개 출제해주세요."
             else:
-                # 1문제 출제의 경우
-                if 'questions' in response and len(response['questions']) > 0:
-                    current_quiz_store[thread_id] = response['questions'][0]
+                prompt = f"초등학교와 중학교 교육 관련 문제를 {question_count}개 출제해주세요."
+            
+            prompt += """
+
+반드시 다음 JSON 형식을 정확히 따라야 합니다:
+
+{
+  "type": "QUIZ",
+  "questions": [
+    {
+      "subject": "과목명",
+      "grade": "학년",
+      "unit": "단원명",
+      "question": "문제 내용",
+      "options": ["① 보기1", "② 보기2", "③ 보기3", "④ 보기4", "⑤ 보기5"],
+      "correct": "정답",
+      "type": "용어 정의",
+      "explanation": "해설"
+    }
+  ]
+}
+
+중요 규칙:
+1. questions 배열에 정확히 """ + str(question_count) + """개의 문제가 있어야 합니다.
+2. 각 문제는 반드시 subject, grade, unit, question, options, correct, type, explanation 필드를 모두 포함해야 합니다.
+3. options 배열은 정확히 5개의 보기를 포함해야 합니다.
+4. correct는 반드시 options 배열의 요소 중 하나와 정확히 일치해야 합니다.
+5. 단원 정보는 반드시 정확하게 입력해야 합니다.
+"""
+            
+            print("=== 전송하는 프롬프트 ===")
+            print(prompt)
+            print("========================")
+            
+            # OpenAI API 호출
+            client.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=prompt
+            )
+            
+            run = client.beta.threads.runs.create(
+                thread_id=thread_id,
+                assistant_id=quiz_bot.assistant_id
+            )
+            
+            while True:
+                run_status = client.beta.threads.runs.retrieve(
+                    thread_id=thread_id,
+                    run_id=run.id
+                )
+                if run_status.status == 'completed':
+                    break
+                time.sleep(1)
+            
+            messages = client.beta.threads.messages.list(thread_id=thread_id)
+            response_text = messages.data[0].content[0].text.value
+            
+            # 마크다운 코드 블록 제거
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:].strip()
+            
+            print(f"Cleaned response text: {response_text}")
+            
+            try:
+                response = json.loads(response_text)
+                if response.get('type') == 'QUIZ' and 'questions' in response:
+                    questions = response['questions']
+                    
+                    if len(questions) != question_count:
+                        print(f"Expected {question_count} questions but got {len(questions)}")
+                        # 오류 응답
+                        return jsonify({
+                            'type': 'ERROR',
+                            'message': '문제 생성 중 오류가 발생했습니다.'
+                        }), 500
+                    
+                    if question_count > 1:
+                        # 첫 번째 문제 반환
+                        first_question = questions[0]
+                        current_quiz_store[thread_id] = {
+                            'questions': questions,
+                            'current_index': 0,
+                            'total_questions': question_count
+                        }
+                        return jsonify({
+                            'type': 'QUIZ',
+                            'quiz': first_question,
+                            'progress': {
+                                'current': 1,
+                                'total': question_count
+                            }
+                        })
+                    
+                    # 단일 문제인 경우
+                    current_quiz_store[thread_id] = questions[0]
                     return jsonify({
                         'type': 'QUIZ',
-                        'quiz': response['questions'][0],
+                        'quiz': questions[0],
                         'progress': {
                             'current': 1,
                             'total': 1
                         }
                     })
-            return jsonify(response)
-            
-        elif current_quiz and isinstance(current_quiz, dict):
-            print("=== 답변 체크 시작 ===")
-            response = quiz_bot.check_answer(message, thread_id)
-            
-            if response.get('type') == 'ANSWER':
-                # 여러 문제인 경우
-                if 'questions' in current_quiz:
-                    current_index = current_quiz['current_index']
-                    total_questions = current_quiz['total_questions']
-                    current_question = current_quiz['questions'][current_index]
-                    
-                    # 답변 저장 - 중복 저장 방지
-                    if current_user.is_authenticated:
-                        answer = Answer(
-                            user_id=current_user.id,
-                            main_unit=current_question.get('main_unit', ''),
-                            sub_unit=current_question.get('sub_unit', ''),
-                            unit=current_question.get('main_unit', ''),  # 하위 호환성 유지
-                            question=current_question['question'],
-                            user_answer=message,
-                            is_correct=response['answer'].get('correct', False),
-                            timestamp=datetime.utcnow()
-                        )
-                        db.session.add(answer)
-                        db.session.commit()
-                        
-                        print("=== 답변 저장 완료 ===")
-                        print(f"대단원: {current_question.get('main_unit', '')}")
-                        print(f"소단원: {current_question.get('sub_unit', '')}")
-                        print(f"정답여부: {response['answer'].get('correct')}")
-                    
-                    if current_index + 1 < total_questions:
-                        # 다음 문제 준비
-                        current_quiz['current_index'] += 1
-                        next_question = current_quiz['questions'][current_quiz['current_index']]
-                        response['next_question'] = {
-                            'type': 'QUIZ',
-                            'quiz': next_question,
-                            'progress': {
-                                'current': current_quiz['current_index'] + 1,
-                                'total': total_questions
-                            }
-                        }
-                    else:
-                        response['quiz_completed'] = True
-                # 단일 문제인 경우
                 else:
-                    if current_user.is_authenticated:
-                        answer = Answer(
-                            user_id=current_user.id,
-                            main_unit=current_quiz.get('main_unit', ''),
-                            sub_unit=current_quiz.get('sub_unit', ''),
-                            unit=current_quiz.get('main_unit', ''),  # 하위 호환성 유지
-                            question=current_quiz['question'],
-                            user_answer=message,
-                            is_correct=response['answer'].get('correct', False),
-                            timestamp=datetime.utcnow()
-                        )
-                        db.session.add(answer)
-                        db.session.commit()
-                        
-                        print("=== 답변 저장 완료 ===")
-                        print(f"대단원: {current_quiz.get('main_unit', '')}")
-                        print(f"소단원: {current_quiz.get('sub_unit', '')}")
-                        print(f"정답여부: {response['answer'].get('correct')}")
-            
-            return jsonify(response)
-            
+                    # 형식이 맞지 않는 경우
+                    return jsonify({
+                        'type': 'ERROR',
+                        'message': '문제 생성 중 오류가 발생했습니다.'
+                    }), 500
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error: {e}")
+                return jsonify({
+                    'type': 'ERROR',
+                    'message': '문제 생성 중 오류가 발생했습니다.'
+                }), 500
         else:
-            print("=== 일반 질문 처리 ===")
-            response = quiz_bot.get_chat_response(message, thread_id)
+            # 일반 대화 처리
+            client.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=message
+            )
             
-            if response.get('type') == 'CHAT':
-                explanation = response.get('message', '')
-                response = {
-                    'type': 'ANSWER',
-                    'answer': {
-                        'correct': None,
-                        'explanation': explanation
-                    }
-                }
+            run = client.beta.threads.runs.create(
+                thread_id=thread_id,
+                assistant_id=quiz_bot.assistant_id
+            )
             
-            return jsonify(response)
-        
+            while True:
+                run_status = client.beta.threads.runs.retrieve(
+                    thread_id=thread_id,
+                    run_id=run.id
+                )
+                if run_status.status == 'completed':
+                    break
+                time.sleep(1)
+            
+            messages = client.beta.threads.messages.list(thread_id=thread_id)
+            response_text = messages.data[0].content[0].text.value
+            
+            # 마크다운 코드 블록 제거
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:].strip()
+            
+            try:
+                response = json.loads(response_text)
+                return jsonify(response)
+            except json.JSONDecodeError:
+                # JSON이 아닌 경우 일반 텍스트 응답
+                return jsonify({
+                    'type': 'CHAT',
+                    'message': response_text
+                })
     except Exception as e:
         print(f"Error in chat: {str(e)}")
         return jsonify({
             'type': 'ERROR',
-            'message': '죄송합니다. 오류가 발생했습니다.'
-        })
+            'message': '메시지 처리 중 오류가 발생했습니다.'
+        }), 500
 
 @app.route('/admin')
 @login_required
@@ -701,11 +821,12 @@ def admin_dashboard():
             print(f"진도율 계산 오류: {e}")
             average_progress = 0
         
-        # 단원별 통계 쿼리 - main_unit과 sub_unit 필드 모두 사용
+        # 단원별 통계 쿼리 - 새로운 분류 체계 (과목>학년>단원)
         try:
             unit_stats_query = db.session.query(
-                Answer.main_unit,
-                Answer.sub_unit,
+                Answer.subject,
+                Answer.grade,
+                Answer.unit,
                 func.count(Answer.id).label('attempts'),
                 func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
                 func.count(distinct(Answer.user_id)).label('unique_students')
@@ -715,14 +836,15 @@ def admin_dashboard():
             if selected_student_id:
                 unit_stats_query = unit_stats_query.filter(Answer.user_id == selected_student_id)
             
-            # main_unit과 sub_unit으로 그룹화
-            unit_stats = unit_stats_query.group_by(Answer.main_unit, Answer.sub_unit).all()
+            # subject, grade, unit으로 그룹화
+            unit_stats = unit_stats_query.group_by(Answer.subject, Answer.grade, Answer.unit).all()
             
-            # main_unit이 없는 경우 unit 필드 사용
+            # 결과 가공
             unit_stats = [{
-                'main_unit': stat.main_unit or stat[0] or '미분류',
-                'sub_unit': stat.sub_unit or stat[1] or '',
-                'name': f"{stat.main_unit or stat[0] or '미분류'} - {stat.sub_unit or stat[1] or ''}",
+                'subject': stat.subject or '미분류',
+                'grade': stat.grade or '',
+                'unit': stat.unit or '',
+                'name': f"{stat.subject or '미분류'} - {stat.grade or ''} - {stat.unit or ''}",
                 'total_questions': 100,
                 'attempts': stat.attempts,
                 'correct': stat.correct,
@@ -731,10 +853,11 @@ def admin_dashboard():
             } for stat in unit_stats]
         except Exception as e:
             print(f"단원별 통계 쿼리 오류: {e}")
-            # 대체 쿼리: unit 필드만 사용
+            # 대체 쿼리: 기존 main_unit, sub_unit 필드 사용 (하위 호환성)
             try:
                 unit_stats_query = db.session.query(
-                    Answer.unit,
+                    Answer.main_unit,
+                    Answer.sub_unit,
                     func.count(Answer.id).label('attempts'),
                     func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
                     func.count(distinct(Answer.user_id)).label('unique_students')
@@ -743,12 +866,13 @@ def admin_dashboard():
                 if selected_student_id:
                     unit_stats_query = unit_stats_query.filter(Answer.user_id == selected_student_id)
                 
-                unit_stats = unit_stats_query.group_by(Answer.unit).all()
+                unit_stats = unit_stats_query.group_by(Answer.main_unit, Answer.sub_unit).all()
                 
                 unit_stats = [{
-                    'main_unit': stat.unit or '미분류',
-                    'sub_unit': '',
-                    'name': stat.unit or '미분류',
+                    'subject': stat.main_unit or '미분류',
+                    'grade': '',
+                    'unit': stat.sub_unit or '',
+                    'name': f"{stat.main_unit or '미분류'} - {stat.sub_unit or ''}",
                     'total_questions': 100,
                     'attempts': stat.attempts,
                     'correct': stat.correct,
@@ -931,7 +1055,7 @@ def standardize_unit_names():
         return jsonify({'error': '권한이 없습니다.'}), 403
         
     try:
-        # '화학 반응의 규칙과 에너지 변화' 단원명 표준화
+        # 과목, 학년, 단원 표준화 예시 (화학 반응의 규칙과 에너지 변화)
         answers = Answer.query.filter(
             Answer.unit.like('%화학%반응%규칙%에너지%변화%')
         ).all()
@@ -940,6 +1064,50 @@ def standardize_unit_names():
         for answer in answers:
             if answer.unit != '화학 반응의 규칙과 에너지 변화':
                 answer.unit = '화학 반응의 규칙과 에너지 변화'
+                # 과목과 학년도 함께 표준화
+                if '과학' in answer.unit:
+                    answer.subject = '과학'
+                if not answer.grade and '중3' in answer.unit:
+                    answer.grade = '중3'
+                standardized_count += 1
+        
+        # 과목 표준화 (빈 값이나 오타 수정)
+        subject_mapping = {
+            '과': '과학',
+            '과학 ': '과학',
+            '과학.': '과학',
+            '사': '사회',
+            '사회 ': '사회',
+            '사회.': '사회',
+            '한': '한국사',
+            '한국': '한국사',
+            '한국사 ': '한국사',
+            '한국사.': '한국사'
+        }
+        
+        for wrong, correct in subject_mapping.items():
+            answers = Answer.query.filter(Answer.subject == wrong).all()
+            for answer in answers:
+                answer.subject = correct
+                standardized_count += 1
+        
+        # 학년 표준화
+        grade_mapping = {
+            '중1학년': '중1',
+            '중2학년': '중2',
+            '중3학년': '중3',
+            '중 1': '중1',
+            '중 2': '중2',
+            '중 3': '중3',
+            '1학년': '중1',
+            '2학년': '중2',
+            '3학년': '중3'
+        }
+        
+        for wrong, correct in grade_mapping.items():
+            answers = Answer.query.filter(Answer.grade == wrong).all()
+            for answer in answers:
+                answer.grade = correct
                 standardized_count += 1
         
         db.session.commit()
@@ -963,7 +1131,41 @@ def download_unit_stats():
     student_id = request.args.get('student_id')
     
     try:
-        # 단원별 통계 쿼리 - main_unit과 sub_unit 필드 모두 사용
+        # 단원별 통계 쿼리 - 새로운 분류 체계 (과목>학년>단원)
+        query = db.session.query(
+            Answer.subject,
+            Answer.grade,
+            Answer.unit,
+            func.count(Answer.id).label('attempts'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
+            func.count(distinct(Answer.user_id)).label('unique_students')
+        )
+        
+        if student_id:
+            query = query.filter(Answer.user_id == student_id)
+        
+        unit_stats = query.group_by(Answer.subject, Answer.grade, Answer.unit).all()
+        
+        # 선택된 학생 정보
+        selected_student = User.query.get(student_id) if student_id else None
+        
+        html = render_template('stats_report.html',
+                             generated_at=datetime.utcnow(),
+                             report_type='unit',
+                             selected_student=selected_student,
+                             unit_stats=[{
+                                 'subject': stat.subject or '미분류',
+                                 'grade': stat.grade or '',
+                                 'unit': stat.unit or '',
+                                 'name': f"{stat.subject or '미분류'} - {stat.grade or ''} - {stat.unit or ''}",
+                                 'attempts': stat.attempts,
+                                 'correct': stat.correct,
+                                 'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+                                 'unique_students': stat.unique_students
+                             } for stat in unit_stats])
+    except Exception as e:
+        print(f"단원별 통계 다운로드 오류: {e}")
+        # 대체 쿼리: 기존 main_unit, sub_unit 필드 사용 (하위 호환성)
         query = db.session.query(
             Answer.main_unit,
             Answer.sub_unit,
@@ -985,40 +1187,10 @@ def download_unit_stats():
                              report_type='unit',
                              selected_student=selected_student,
                              unit_stats=[{
-                                 'main_unit': stat.main_unit or '미분류',
-                                 'sub_unit': stat.sub_unit or '',
+                                 'subject': stat.main_unit or '미분류',
+                                 'grade': '',
+                                 'unit': stat.sub_unit or '',
                                  'name': f"{stat.main_unit or '미분류'} - {stat.sub_unit or ''}",
-                                 'attempts': stat.attempts,
-                                 'correct': stat.correct,
-                                 'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
-                                 'unique_students': stat.unique_students
-                             } for stat in unit_stats])
-    except Exception as e:
-        print(f"단원별 통계 다운로드 오류: {e}")
-        # 대체 쿼리: unit 필드만 사용
-        query = db.session.query(
-            Answer.unit,
-            func.count(Answer.id).label('attempts'),
-            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-            func.count(distinct(Answer.user_id)).label('unique_students')
-        )
-        
-        if student_id:
-            query = query.filter(Answer.user_id == student_id)
-        
-        unit_stats = query.group_by(Answer.unit).all()
-        
-        # 선택된 학생 정보
-        selected_student = User.query.get(student_id) if student_id else None
-        
-        html = render_template('stats_report.html',
-                             generated_at=datetime.utcnow(),
-                             report_type='unit',
-                             selected_student=selected_student,
-                             unit_stats=[{
-                                 'main_unit': stat.unit or '미분류',
-                                 'sub_unit': '',
-                                 'name': stat.unit or '미분류',
                                  'attempts': stat.attempts,
                                  'correct': stat.correct,
                                  'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
@@ -1042,7 +1214,9 @@ def download_student_stats():
         User,
         func.count(Answer.id).label('total'),
         func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct')
-    ).join(Answer).filter(User.username != 'admin').group_by(User.id).all()
+    ).join(Answer, User.id == Answer.user_id)\
+     .filter(User.username != 'admin')\
+     .group_by(User.id).all()
     
     html = render_template('stats_report.html',
                          generated_at=datetime.utcnow(),
@@ -1062,7 +1236,29 @@ def download_statistics():
         return redirect(url_for('login'))
         
     try:
-        # 전체 통계 (단원별 + 학생별) - main_unit과 sub_unit 필드 모두 사용
+        # 전체 통계 (단원별 + 학생별) - 새로운 분류 체계 (과목>학년>단원)
+        unit_stats = db.session.query(
+            Answer.subject,
+            Answer.grade,
+            Answer.unit,
+            func.count(Answer.id).label('attempts'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
+            func.count(distinct(Answer.user_id)).label('unique_students')
+        ).group_by(Answer.subject, Answer.grade, Answer.unit).all()
+        
+        unit_stats_data = [{
+            'subject': stat.subject or '미분류',
+            'grade': stat.grade or '',
+            'unit': stat.unit or '',
+            'name': f"{stat.subject or '미분류'} - {stat.grade or ''} - {stat.unit or ''}",
+            'attempts': stat.attempts,
+            'correct': stat.correct,
+            'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+            'unique_students': stat.unique_students
+        } for stat in unit_stats]
+    except Exception as e:
+        print(f"단원별 통계 다운로드 오류: {e}")
+        # 대체 쿼리: 기존 main_unit, sub_unit 필드 사용 (하위 호환성)
         unit_stats = db.session.query(
             Answer.main_unit,
             Answer.sub_unit,
@@ -1072,28 +1268,10 @@ def download_statistics():
         ).group_by(Answer.main_unit, Answer.sub_unit).all()
         
         unit_stats_data = [{
-            'main_unit': stat.main_unit or '미분류',
-            'sub_unit': stat.sub_unit or '',
+            'subject': stat.main_unit or '미분류',
+            'grade': '',
+            'unit': stat.sub_unit or '',
             'name': f"{stat.main_unit or '미분류'} - {stat.sub_unit or ''}",
-            'attempts': stat.attempts,
-            'correct': stat.correct,
-            'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
-            'unique_students': stat.unique_students
-        } for stat in unit_stats]
-    except Exception as e:
-        print(f"단원별 통계 다운로드 오류: {e}")
-        # 대체 쿼리: unit 필드만 사용
-        unit_stats = db.session.query(
-            Answer.unit,
-            func.count(Answer.id).label('attempts'),
-            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-            func.count(distinct(Answer.user_id)).label('unique_students')
-        ).group_by(Answer.unit).all()
-        
-        unit_stats_data = [{
-            'main_unit': stat.unit or '미분류',
-            'sub_unit': '',
-            'name': stat.unit or '미분류',
             'attempts': stat.attempts,
             'correct': stat.correct,
             'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,

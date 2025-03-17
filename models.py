@@ -31,9 +31,16 @@ class User(UserMixin, db.Model):
 class Answer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    main_unit = db.Column(db.String(100), nullable=True)  # 대단원
-    sub_unit = db.Column(db.String(100), nullable=True)   # 소단원
-    unit = db.Column(db.String(100), nullable=True)       # 기존 단원 필드 (하위 호환성 유지)
+    
+    # 새로운 분류 체계
+    subject = db.Column(db.String(50), nullable=True)     # 과목 (예: 과학, 수학 등)
+    grade = db.Column(db.String(20), nullable=True)       # 학년 (예: 중1, 중2, 중3)
+    unit = db.Column(db.String(100), nullable=True)       # 단원
+    
+    # 기존 필드 (하위 호환성 유지)
+    main_unit = db.Column(db.String(100), nullable=True)  # 대단원 (이전 버전 호환용)
+    sub_unit = db.Column(db.String(100), nullable=True)   # 소단원 (이전 버전 호환용)
+    
     question = db.Column(db.Text, nullable=False)
     user_answer = db.Column(db.String(10), nullable=False)
     is_correct = db.Column(db.Boolean, nullable=False)
