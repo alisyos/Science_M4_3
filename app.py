@@ -885,30 +885,41 @@ def admin_dashboard():
         
         # 학생별 통계 (단원별 통계와 독립적)
         try:
-            student_stats = db.session.query(
+            student_stats_query = db.session.query(
                 User,
                 func.count(Answer.id).label('total'),
                 func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct')
             ).join(Answer, User.id == Answer.user_id)\
-             .filter(User.username != 'admin')\
-             .group_by(User.id).all()
+             .filter(User.username != 'admin')
+            
+            # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
+            if selected_student_id:
+                student_stats_query = student_stats_query.filter(User.id == selected_student_id)
+            
+            student_stats = student_stats_query.group_by(User.id).all()
         except Exception as e:
             print(f"학생별 통계 쿼리 오류: {e}")
             student_stats = []
         
-        # 과목별 통계 데이터 조회 추가
+        # 과목별 통계 데이터 조회
         try:
-            subject_stats = db.session.query(
+            subject_stats_query = db.session.query(
                 Answer.subject,
                 func.count(Answer.id).label('total_questions'),
                 func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct_answers'),
                 func.sum(case((Answer.is_correct == False, 1), else_=0)).label('incorrect_answers'),
                 func.round(func.sum(case((Answer.is_correct == True, 1), else_=0)) * 100.0 / func.count(Answer.id), 1).label('accuracy_rate'),
                 func.count(func.distinct(Answer.user_id)).label('unique_students')
-            ).group_by(Answer.subject).all()
+            )
+            
+            # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
+            if selected_student_id:
+                subject_stats_query = subject_stats_query.filter(Answer.user_id == selected_student_id)
+            
+            subject_stats = subject_stats_query.group_by(Answer.subject).all()
             
             # 결과 가공
-            subject_stats = [{
+            subject_stats_data = [{
                 'subject': stat.subject or '미분류',
                 'total_questions': stat.total_questions,
                 'correct_answers': stat.correct_answers,
@@ -918,21 +929,27 @@ def admin_dashboard():
             } for stat in subject_stats]
         except Exception as e:
             print(f"과목별 통계 쿼리 오류: {e}")
-            subject_stats = []
+            subject_stats_data = []
         
-        # 학년별 통계 데이터 조회 추가
+        # 학년별 통계 데이터 조회
         try:
-            grade_stats = db.session.query(
+            grade_stats_query = db.session.query(
                 Answer.grade,
                 func.count(Answer.id).label('total_questions'),
                 func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct_answers'),
                 func.sum(case((Answer.is_correct == False, 1), else_=0)).label('incorrect_answers'),
                 func.round(func.sum(case((Answer.is_correct == True, 1), else_=0)) * 100.0 / func.count(Answer.id), 1).label('accuracy_rate'),
                 func.count(func.distinct(Answer.user_id)).label('unique_students')
-            ).group_by(Answer.grade).all()
+            )
+            
+            # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
+            if selected_student_id:
+                grade_stats_query = grade_stats_query.filter(Answer.user_id == selected_student_id)
+            
+            grade_stats = grade_stats_query.group_by(Answer.grade).all()
             
             # 결과 가공
-            grade_stats = [{
+            grade_stats_data = [{
                 'grade': stat.grade or '미분류',
                 'total_questions': stat.total_questions,
                 'correct_answers': stat.correct_answers,
@@ -942,7 +959,7 @@ def admin_dashboard():
             } for stat in grade_stats]
         except Exception as e:
             print(f"학년별 통계 쿼리 오류: {e}")
-            grade_stats = []
+            grade_stats_data = []
         
         return render_template('admin.html',
                              students=students,
@@ -953,8 +970,8 @@ def admin_dashboard():
                              average_progress=average_progress,
                              unit_stats=unit_stats,
                              student_stats=student_stats,
-                             subject_stats=subject_stats,
-                             grade_stats=grade_stats)
+                             subject_stats=subject_stats_data,
+                             grade_stats=grade_stats_data)
                              
     except Exception as e:
         print(f"Error in admin_dashboard: {str(e)}")
@@ -1388,16 +1405,22 @@ def download_subject_stats():
     
     try:
         # 과목별 통계 데이터 조회
-        subject_stats = db.session.query(
+        subject_stats_query = db.session.query(
             Answer.subject,
             func.count(Answer.id).label('total_questions'),
             func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct_answers'),
             func.sum(case((Answer.is_correct == False, 1), else_=0)).label('incorrect_answers'),
             func.round(func.sum(case((Answer.is_correct == True, 1), else_=0)) * 100.0 / func.count(Answer.id), 1).label('accuracy_rate'),
             func.count(func.distinct(Answer.user_id)).label('unique_students')
-        ).group_by(Answer.subject).all()
+        )
         
-        # 데이터 가공
+        # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
+        if selected_student_id:
+            subject_stats_query = subject_stats_query.filter(Answer.user_id == selected_student_id)
+        
+        subject_stats = subject_stats_query.group_by(Answer.subject).all()
+        
+        # 결과 가공
         subject_stats_data = [{
             'subject': stat.subject or '미분류',
             'total_questions': stat.total_questions,
@@ -1430,14 +1453,20 @@ def download_grade_stats():
     
     try:
         # 학년별 통계 데이터 조회
-        grade_stats = db.session.query(
+        grade_stats_query = db.session.query(
             Answer.grade,
             func.count(Answer.id).label('total_questions'),
             func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct_answers'),
             func.sum(case((Answer.is_correct == False, 1), else_=0)).label('incorrect_answers'),
             func.round(func.sum(case((Answer.is_correct == True, 1), else_=0)) * 100.0 / func.count(Answer.id), 1).label('accuracy_rate'),
             func.count(func.distinct(Answer.user_id)).label('unique_students')
-        ).group_by(Answer.grade).all()
+        )
+        
+        # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
+        if selected_student_id:
+            grade_stats_query = grade_stats_query.filter(Answer.user_id == selected_student_id)
+        
+        grade_stats = grade_stats_query.group_by(Answer.grade).all()
         
         # 데이터 가공
         grade_stats_data = [{
