@@ -4,16 +4,32 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div class="d-flex align-items-center">
         <h2 class="me-3">대시보드</h2>
-        <select id="studentSelect" class="form-select" style="width: auto;">
-            <option value="">전체</option>
+        <select id="studentSelect" class="form-select me-2" style="width: auto;">
+            <option value="">전체 학생</option>
             {% for student in students %}
             <option value="{{ student.id }}" {% if selected_student_id == student.id %}selected{% endif %}>
                 {{ student.username }}
             </option>
             {% endfor %}
         </select>
+        <select id="subjectSelect" class="form-select me-2" style="width: auto;">
+            <option value="">전체 과목</option>
+            {% for subject in unique_subjects %}
+            <option value="{{ subject }}" {% if selected_subject == subject %}selected{% endif %}>
+                {{ subject or '미분류' }}
+            </option>
+            {% endfor %}
+        </select>
+        <select id="gradeSelect" class="form-select" style="width: auto;">
+            <option value="">전체 학년</option>
+            {% for grade in unique_grades %}
+            <option value="{{ grade }}" {% if selected_grade == grade %}selected{% endif %}>
+                {{ grade or '미분류' }}
+            </option>
+            {% endfor %}
+        </select>
     </div>
-    <button onclick="window.location.href='/api/admin/statistics/download'" class="btn btn-primary">
+    <button onclick="downloadCompleteStats()" class="btn btn-primary">
         통계 리포트 다운로드
     </button>
 </div>
@@ -56,11 +72,10 @@
 
 <!-- 학생별 통계 (이름을 통계(합산)으로 변경하고 위치 이동) -->
 <div class="card mb-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
+    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
         <h5 class="mb-0">통계(합산)</h5>
         <div>
             <button id="deleteAllBtn" class="btn btn-danger me-2">전체 통계 삭제</button>
-            <button class="btn btn-success" onclick="downloadStudentStatsReport()">학생별 통계 다운로드</button>
         </div>
     </div>
     <div class="card-body">
@@ -119,9 +134,6 @@
 <div class="section mb-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h3>과목별 통계</h3>
-        <button onclick="downloadSubjectStatsReport()" class="btn btn-success" style="white-space: nowrap;">
-            과목별 통계 다운로드
-        </button>
     </div>
     <div class="card">
         <div class="card-body">
@@ -163,9 +175,6 @@
 <div class="section mb-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h3>학년별 통계</h3>
-        <button onclick="downloadGradeStatsReport()" class="btn btn-success" style="white-space: nowrap;">
-            학년별 통계 다운로드
-        </button>
     </div>
     <div class="card">
         <div class="card-body">
@@ -209,9 +218,6 @@
         <h3>단원별 통계</h3>
         <div class="d-flex align-items-center">
             <button id="standardizeUnits" class="btn btn-primary me-2">단원명 표준화</button>
-            <button onclick="downloadUnitStatsReport()" class="btn btn-success" style="white-space: nowrap;">
-                단원별 통계 다운로드
-            </button>
         </div>
     </div>
     <div class="card">
@@ -273,19 +279,48 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    // 학생 선택 이벤트 핸들러 추가
+    // 선택 이벤트 핸들러 추가
     document.getElementById('studentSelect').addEventListener('change', function() {
-        updateStats(this.value);
+        updateStats();
     });
 
-    // 통계 업데이트 함수 수정 - 모든 통계를 대상으로 함
-    function updateStats(studentId) {
+    document.getElementById('subjectSelect').addEventListener('change', function() {
+        updateStats();
+    });
+
+    document.getElementById('gradeSelect').addEventListener('change', function() {
+        updateStats();
+    });
+
+    // 통계 업데이트 함수 수정 - 모든 필터를 적용
+    function updateStats() {
+        const studentId = document.getElementById('studentSelect').value;
+        const subject = document.getElementById('subjectSelect').value;
+        const grade = document.getElementById('gradeSelect').value;
+        
         const url = new URL(window.location.href);
+        
+        // 학생 필터 적용
         if (studentId) {
             url.searchParams.set('student_id', studentId);
         } else {
             url.searchParams.delete('student_id');
         }
+        
+        // 과목 필터 적용
+        if (subject) {
+            url.searchParams.set('subject', subject);
+        } else {
+            url.searchParams.delete('subject');
+        }
+        
+        // 학년 필터 적용
+        if (grade) {
+            url.searchParams.set('grade', grade);
+        } else {
+            url.searchParams.delete('grade');
+        }
+        
         window.location.href = url.toString();
     }
 
@@ -311,23 +346,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 });
-
-function downloadSubjectStatsReport() {
-    window.location.href = '/admin/stats/subject-report';
-}
-
-function downloadGradeStatsReport() {
-    window.location.href = '/admin/stats/grade-report';
-}
-
-function downloadUnitStatsReport() {
-    const studentId = document.getElementById('studentSelect').value;
-    window.location.href = `/admin/stats/unit-report${studentId ? `?student_id=${studentId}` : ''}`;
-}
-
-function downloadStudentStatsReport() {
-    window.location.href = '/admin/stats/student-report';
-}
 
 document.getElementById('standardizeUnits').addEventListener('click', function() {
     if (confirm('단원명을 표준화하시겠습니까?')) {
@@ -408,5 +426,25 @@ var unitStatsChart = new Chart(unitStatsCtx, {
         }
     }
 });
+
+// 통계 다운로드 함수 수정 - 모든 필터 추가
+function downloadCompleteStats() {
+    const studentId = document.getElementById('studentSelect').value;
+    const subject = document.getElementById('subjectSelect').value;
+    const grade = document.getElementById('gradeSelect').value;
+    
+    let url = `/api/admin/statistics/download`;
+    const params = [];
+    
+    if (studentId) params.push(`student_id=${studentId}`);
+    if (subject) params.push(`subject=${encodeURIComponent(subject)}`);
+    if (grade) params.push(`grade=${encodeURIComponent(grade)}`);
+    
+    if (params.length > 0) {
+        url += '?' + params.join('&');
+    }
+    
+    window.location.href = url;
+}
 </script>
 {% endblock %}

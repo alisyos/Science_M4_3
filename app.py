@@ -775,24 +775,46 @@ def admin_dashboard():
     
     print("관리자 대시보드 접근")
     
-    # Answer 모델의 컬럼 확인
-    print("Answer 모델 컬럼:", [column.name for column in Answer.__table__.columns])
-        
     try:
         # 전체 학생 목록 조회 (admin 제외)
         students = User.query.filter(User.username != 'admin').all()
         
-        # 단원별 통계를 위한 선택된 학생 ID
+        # 필터링을 위한 파라미터 가져오기
         selected_student_id = request.args.get('student_id', type=int)
+        selected_subject = request.args.get('subject')
+        selected_grade = request.args.get('grade')
+        
+        # 모든 과목 및 학년 목록 조회
+        unique_subjects = db.session.query(Answer.subject).distinct().all()
+        unique_subjects = [subj[0] for subj in unique_subjects if subj[0]]
+        
+        unique_grades = db.session.query(Answer.grade).distinct().all()
+        unique_grades = [grade[0] for grade in unique_grades if grade[0]]
         
         # 전체 학생 수
         total_students = len(students)
         
+        # 통계 쿼리 기본 필터 설정
+        base_query_filter = []
+        if selected_student_id:
+            base_query_filter.append(Answer.user_id == selected_student_id)
+        if selected_subject:
+            base_query_filter.append(Answer.subject == selected_subject)
+        if selected_grade:
+            base_query_filter.append(Answer.grade == selected_grade)
+        
         # 안전하게 쿼리 실행
         try:
-            # 총 문제 풀이 수와 정답 수 (전체)
-            total_answers = Answer.query.count()
-            total_correct = Answer.query.filter_by(is_correct=True).count()
+            # 총 문제 풀이 수와 정답 수 (필터 적용)
+            total_answers_query = Answer.query
+            for filter_condition in base_query_filter:
+                total_answers_query = total_answers_query.filter(filter_condition)
+            total_answers = total_answers_query.count()
+            
+            total_correct_query = Answer.query.filter_by(is_correct=True)
+            for filter_condition in base_query_filter:
+                total_correct_query = total_correct_query.filter(filter_condition)
+            total_correct = total_correct_query.count()
             
             # 전체 정답률
             accuracy_rate = (total_correct / total_answers * 100) if total_answers > 0 else 0
@@ -802,14 +824,21 @@ def admin_dashboard():
             total_correct = 0
             accuracy_rate = 0
         
-        # 평균 학습 진도율 계산 (100문제 기준)
+        # 평균 학습 진도율 계산 (100문제 기준, 필터 적용)
         try:
-            student_progress = db.session.query(
+            student_progress_query = db.session.query(
                 User.id,
                 func.count(Answer.id).label('total_answers')
             ).join(Answer, User.id == Answer.user_id)\
-             .filter(User.username != 'admin')\
-             .group_by(User.id).all()
+             .filter(User.username != 'admin')
+            
+            # 과목 및 학년 필터 적용
+            if selected_subject:
+                student_progress_query = student_progress_query.filter(Answer.subject == selected_subject)
+            if selected_grade:
+                student_progress_query = student_progress_query.filter(Answer.grade == selected_grade)
+            
+            student_progress = student_progress_query.group_by(User.id).all()
             
             progress_count = len(student_progress)
             if progress_count > 0:
@@ -821,7 +850,7 @@ def admin_dashboard():
             print(f"진도율 계산 오류: {e}")
             average_progress = 0
         
-        # 단원별 통계 쿼리 - 새로운 분류 체계 (과목>학년>단원)
+        # 단원별 통계 쿼리
         try:
             unit_stats_query = db.session.query(
                 Answer.subject,
@@ -832,9 +861,9 @@ def admin_dashboard():
                 func.count(distinct(Answer.user_id)).label('unique_students')
             )
             
-            # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
-            if selected_student_id:
-                unit_stats_query = unit_stats_query.filter(Answer.user_id == selected_student_id)
+            # 필터 적용
+            for filter_condition in base_query_filter:
+                unit_stats_query = unit_stats_query.filter(filter_condition)
             
             # subject, grade, unit으로 그룹화
             unit_stats = unit_stats_query.group_by(Answer.subject, Answer.grade, Answer.unit).all()
@@ -853,35 +882,7 @@ def admin_dashboard():
             } for stat in unit_stats]
         except Exception as e:
             print(f"단원별 통계 쿼리 오류: {e}")
-            # 대체 쿼리: 기존 main_unit, sub_unit 필드 사용 (하위 호환성)
-            try:
-                unit_stats_query = db.session.query(
-                    Answer.main_unit,
-                    Answer.sub_unit,
-                    func.count(Answer.id).label('attempts'),
-                    func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-                    func.count(distinct(Answer.user_id)).label('unique_students')
-                )
-                
-                if selected_student_id:
-                    unit_stats_query = unit_stats_query.filter(Answer.user_id == selected_student_id)
-                
-                unit_stats = unit_stats_query.group_by(Answer.main_unit, Answer.sub_unit).all()
-                
-                unit_stats = [{
-                    'subject': stat.main_unit or '미분류',
-                    'grade': '',
-                    'unit': stat.sub_unit or '',
-                    'name': f"{stat.main_unit or '미분류'} - {stat.sub_unit or ''}",
-                    'total_questions': 100,
-                    'attempts': stat.attempts,
-                    'correct': stat.correct,
-                    'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
-                    'unique_students': stat.unique_students if not selected_student_id else 1
-                } for stat in unit_stats]
-            except Exception as e2:
-                print(f"대체 단원별 통계 쿼리 오류: {e2}")
-                unit_stats = []
+            unit_stats = []
         
         # 학생별 통계 (단원별 통계와 독립적)
         try:
@@ -891,6 +892,12 @@ def admin_dashboard():
                 func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct')
             ).join(Answer, User.id == Answer.user_id)\
              .filter(User.username != 'admin')
+            
+            # 과목 및 학년 필터 적용
+            if selected_subject:
+                student_stats_query = student_stats_query.filter(Answer.subject == selected_subject)
+            if selected_grade:
+                student_stats_query = student_stats_query.filter(Answer.grade == selected_grade)
             
             # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
             if selected_student_id:
@@ -912,9 +919,11 @@ def admin_dashboard():
                 func.count(func.distinct(Answer.user_id)).label('unique_students')
             )
             
-            # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
-            if selected_student_id:
-                subject_stats_query = subject_stats_query.filter(Answer.user_id == selected_student_id)
+            # 필터 적용
+            for filter_condition in base_query_filter:
+                if not isinstance(filter_condition, type(Answer.subject == selected_subject)):
+                    # subject 필터는 과목별 통계에서 제외
+                    subject_stats_query = subject_stats_query.filter(filter_condition)
             
             subject_stats = subject_stats_query.group_by(Answer.subject).all()
             
@@ -942,9 +951,11 @@ def admin_dashboard():
                 func.count(func.distinct(Answer.user_id)).label('unique_students')
             )
             
-            # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
-            if selected_student_id:
-                grade_stats_query = grade_stats_query.filter(Answer.user_id == selected_student_id)
+            # 필터 적용
+            for filter_condition in base_query_filter:
+                if not isinstance(filter_condition, type(Answer.grade == selected_grade)):
+                    # grade 필터는 학년별 통계에서 제외
+                    grade_stats_query = grade_stats_query.filter(filter_condition)
             
             grade_stats = grade_stats_query.group_by(Answer.grade).all()
             
@@ -964,6 +975,10 @@ def admin_dashboard():
         return render_template('admin.html',
                              students=students,
                              selected_student_id=selected_student_id,
+                             selected_subject=selected_subject,
+                             selected_grade=selected_grade,
+                             unique_subjects=unique_subjects,
+                             unique_grades=unique_grades,
                              total_students=total_students,
                              total_answers=total_answers,
                              accuracy_rate=accuracy_rate,
@@ -1301,67 +1316,174 @@ def download_statistics():
     if current_user.username != 'admin':
         flash('관리자 권한이 필요합니다.', 'error')
         return redirect(url_for('login'))
-        
+    
+    # 필터링을 위한 파라미터 가져오기
+    selected_student_id = request.args.get('student_id', type=int)
+    selected_subject = request.args.get('subject')
+    selected_grade = request.args.get('grade')
+    
+    selected_student = User.query.get(selected_student_id) if selected_student_id else None
+    
+    # 기본 필터 설정
+    base_query_filter = []
+    if selected_student_id:
+        base_query_filter.append(Answer.user_id == selected_student_id)
+    if selected_subject:
+        base_query_filter.append(Answer.subject == selected_subject)
+    if selected_grade:
+        base_query_filter.append(Answer.grade == selected_grade)
+    
     try:
-        # 전체 통계 (단원별 + 학생별) - 새로운 분류 체계 (과목>학년>단원)
-        unit_stats = db.session.query(
+        # 1. 학생별 통계 (합산 통계)
+        student_stats_query = db.session.query(
+            User,
+            func.count(Answer.id).label('total'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct')
+        ).join(Answer, User.id == Answer.user_id)\
+         .filter(User.username != 'admin')
+        
+        # 과목 및 학년 필터 적용
+        if selected_subject:
+            student_stats_query = student_stats_query.filter(Answer.subject == selected_subject)
+        if selected_grade:
+            student_stats_query = student_stats_query.filter(Answer.grade == selected_grade)
+        
+        # 학생 필터 적용
+        if selected_student_id:
+            student_stats_query = student_stats_query.filter(User.id == selected_student_id)
+        
+        student_stats = student_stats_query.group_by(User.id).all()
+        
+        # 2. 과목별 통계
+        subject_stats_query = db.session.query(
             Answer.subject,
-            Answer.grade,
-            Answer.unit,
-            func.count(Answer.id).label('attempts'),
-            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-            func.count(distinct(Answer.user_id)).label('unique_students')
-        ).group_by(Answer.subject, Answer.grade, Answer.unit).all()
+            func.count(Answer.id).label('total_questions'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct_answers'),
+            func.sum(case((Answer.is_correct == False, 1), else_=0)).label('incorrect_answers'),
+            func.round(func.sum(case((Answer.is_correct == True, 1), else_=0)) * 100.0 / func.count(Answer.id), 1).label('accuracy_rate'),
+            func.count(func.distinct(Answer.user_id)).label('unique_students')
+        )
         
-        unit_stats_data = [{
+        # 필터 적용 (subject 필터 제외)
+        for filter_condition in base_query_filter:
+            if not isinstance(filter_condition, type(Answer.subject == selected_subject)):
+                subject_stats_query = subject_stats_query.filter(filter_condition)
+        
+        subject_stats = subject_stats_query.group_by(Answer.subject).all()
+        
+        subject_stats_data = [{
             'subject': stat.subject or '미분류',
-            'grade': stat.grade or '',
-            'unit': stat.unit or '',
-            'name': f"{stat.subject or '미분류'} - {stat.grade or ''} - {stat.unit or ''}",
-            'attempts': stat.attempts,
-            'correct': stat.correct,
-            'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+            'total_questions': stat.total_questions,
+            'correct_answers': stat.correct_answers,
+            'incorrect_answers': stat.incorrect_answers,
+            'accuracy_rate': stat.accuracy_rate or 0,
             'unique_students': stat.unique_students
-        } for stat in unit_stats]
-    except Exception as e:
-        print(f"단원별 통계 다운로드 오류: {e}")
-        # 대체 쿼리: 기존 main_unit, sub_unit 필드 사용 (하위 호환성)
-        unit_stats = db.session.query(
-            Answer.main_unit,
-            Answer.sub_unit,
-            func.count(Answer.id).label('attempts'),
-            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-            func.count(distinct(Answer.user_id)).label('unique_students')
-        ).group_by(Answer.main_unit, Answer.sub_unit).all()
+        } for stat in subject_stats]
         
-        unit_stats_data = [{
-            'subject': stat.main_unit or '미분류',
-            'grade': '',
-            'unit': stat.sub_unit or '',
-            'name': f"{stat.main_unit or '미분류'} - {stat.sub_unit or ''}",
-            'attempts': stat.attempts,
-            'correct': stat.correct,
-            'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+        # 3. 학년별 통계
+        grade_stats_query = db.session.query(
+            Answer.grade,
+            func.count(Answer.id).label('total_questions'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct_answers'),
+            func.sum(case((Answer.is_correct == False, 1), else_=0)).label('incorrect_answers'),
+            func.round(func.sum(case((Answer.is_correct == True, 1), else_=0)) * 100.0 / func.count(Answer.id), 1).label('accuracy_rate'),
+            func.count(func.distinct(Answer.user_id)).label('unique_students')
+        )
+        
+        # 필터 적용 (grade 필터 제외)
+        for filter_condition in base_query_filter:
+            if not isinstance(filter_condition, type(Answer.grade == selected_grade)):
+                grade_stats_query = grade_stats_query.filter(filter_condition)
+        
+        grade_stats = grade_stats_query.group_by(Answer.grade).all()
+        
+        grade_stats_data = [{
+            'grade': stat.grade or '미분류',
+            'total_questions': stat.total_questions,
+            'correct_answers': stat.correct_answers,
+            'incorrect_answers': stat.incorrect_answers,
+            'accuracy_rate': stat.accuracy_rate or 0,
             'unique_students': stat.unique_students
-        } for stat in unit_stats]
-    
-    # 학생별 통계
-    student_stats = db.session.query(
-        User,
-        func.count(Answer.id).label('total'),
-        func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct')
-    ).join(Answer).filter(User.username != 'admin').group_by(User.id).all()
-    
-    html = render_template('stats_report.html',
-                         generated_at=datetime.utcnow(),
-                         report_type='both',
-                         unit_stats=unit_stats_data,
-                         student_stats=student_stats)
-    
-    response = make_response(html)
-    response.headers['Content-Type'] = 'text/html'
-    response.headers['Content-Disposition'] = f'attachment; filename=statistics_report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.html'
-    return response
+        } for stat in grade_stats]
+        
+        # 4. 단원별 통계
+        try:
+            unit_stats_query = db.session.query(
+                Answer.subject,
+                Answer.grade,
+                Answer.unit,
+                func.count(Answer.id).label('attempts'),
+                func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
+                func.count(distinct(Answer.user_id)).label('unique_students')
+            )
+            
+            # 필터 적용
+            for filter_condition in base_query_filter:
+                unit_stats_query = unit_stats_query.filter(filter_condition)
+            
+            unit_stats = unit_stats_query.group_by(Answer.subject, Answer.grade, Answer.unit).all()
+            
+            unit_stats_data = [{
+                'subject': stat.subject or '미분류',
+                'grade': stat.grade or '',
+                'unit': stat.unit or '',
+                'name': f"{stat.subject or '미분류'} - {stat.grade or ''} - {stat.unit or ''}",
+                'attempts': stat.attempts,
+                'correct': stat.correct,
+                'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
+                'unique_students': stat.unique_students
+            } for stat in unit_stats]
+        except Exception as e:
+            print(f"단원별 통계 조회 오류: {e}")
+            unit_stats_data = []
+        
+        # 필터 정보 문자열 생성
+        filter_info = []
+        if selected_student:
+            filter_info.append(f"학생: {selected_student.username}")
+        if selected_subject:
+            filter_info.append(f"과목: {selected_subject}")
+        if selected_grade:
+            filter_info.append(f"학년: {selected_grade}")
+        
+        filter_text = " / ".join(filter_info) if filter_info else "전체"
+        
+        # 통합된 리포트 템플릿 렌더링
+        html = render_template('stats_report.html',
+                             generated_at=datetime.utcnow(),
+                             report_type='complete',  # 모든 통계를 포함하는 새로운 타입
+                             selected_student=selected_student,
+                             selected_subject=selected_subject,
+                             selected_grade=selected_grade,
+                             filter_text=filter_text,
+                             student_stats=student_stats,
+                             subject_stats=subject_stats_data,
+                             grade_stats=grade_stats_data,
+                             unit_stats=unit_stats_data)
+        
+        response = make_response(html)
+        response.headers['Content-Type'] = 'text/html'
+        
+        # 파일명에 필터 정보 추가
+        filename_parts = []
+        if selected_student:
+            filename_parts.append(selected_student.username)
+        if selected_subject:
+            filename_parts.append(selected_subject)
+        if selected_grade:
+            filename_parts.append(selected_grade)
+        
+        filename_prefix = "_".join(filename_parts) if filename_parts else "all"
+        filename = f"statistics_report_{filename_prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.html"
+        response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+        return response
+        
+    except Exception as e:
+        print(f"통계 다운로드 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        flash('통계 다운로드 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('admin_dashboard'))
 
 @app.route('/admin/reset-database', methods=['GET', 'POST'])
 @login_required
