@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container my-4">
+    <h2>과목, 학년, 단원 카테고리 업데이트</h2>
+    <p class="text-muted">탭으로 구분된 형식으로 카테고리 데이터를 입력하세요. 각 줄은 '과목 [탭] 학년 [탭] 단원' 형식이어야 합니다.</p>
+    
+    <form method="POST" action="{{ url_for('update_categories') }}">
+        <div class="form-group mb-3">
+            <textarea class="form-control" id="category_data" name="category_data" rows="20" placeholder="과목&#9;학년&#9;단원
+사회&#9;초6&#9;우리나라의 정치 발전
+..."></textarea>
+        </div>
+        
+        <button type="submit" class="btn btn-primary">카테고리 업데이트</button>
+        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary">취소</a>
+    </form>
+</div>
+{% endblock %} 

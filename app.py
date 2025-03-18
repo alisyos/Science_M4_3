@@ -1586,5 +1586,59 @@ def download_grade_stats():
         flash('통계 다운로드 중 오류가 발생했습니다.', 'error')
         return redirect(url_for('admin_dashboard'))
 
+@app.route('/admin/update-categories', methods=['GET', 'POST'])
+@login_required
+def update_categories():
+    if current_user.username != 'admin':
+        flash('관리자 권한이 필요합니다.', 'error')
+        return redirect(url_for('login'))
+    
+    if request.method == 'POST':
+        try:
+            # CSV 또는 텍스트 형식으로 제공된 데이터
+            category_data = request.form.get('category_data')
+            
+            # 데이터 파싱 및 처리
+            categories = []
+            for line in category_data.strip().split('\n'):
+                parts = line.strip().split('\t')
+                if len(parts) >= 3:
+                    subject = parts[0].strip()
+                    grade = parts[1].strip()
+                    unit = parts[2].strip()
+                    
+                    categories.append({
+                        'subject': subject,
+                        'grade': grade,
+                        'unit': unit
+                    })
+            
+            # 데이터베이스에 카테고리 저장 로직 (예: JSON 파일로 저장)
+            import json
+            with open('categories.json', 'w', encoding='utf-8') as f:
+                json.dump(categories, f, ensure_ascii=False, indent=4)
+            
+            flash(f'{len(categories)}개의 카테고리가 성공적으로 업데이트되었습니다.', 'success')
+            return redirect(url_for('admin_dashboard'))
+            
+        except Exception as e:
+            flash(f'카테고리 업데이트 중 오류가 발생했습니다: {str(e)}', 'error')
+    
+    return render_template('update_categories.html')
+
+@app.route('/api/categories')
+def get_categories():
+    try:
+        import json
+        # 저장된 카테고리 JSON 파일 읽기
+        with open('categories.json', 'r', encoding='utf-8') as f:
+            categories = json.load(f)
+        return jsonify(categories)
+    except FileNotFoundError:
+        # 기본 카테고리 반환
+        return jsonify([])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     app.run(debug=True)

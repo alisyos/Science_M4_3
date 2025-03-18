@@ -1163,6 +1163,84 @@
                 });
             }
         });
+
+        // 카테고리 가져오기 함수
+        function fetchCategories() {
+            fetch('/api/categories')
+                .then(response => response.json())
+                .then(data => {
+                    // 과목 목록 가져오기 (중복 제거)
+                    const subjects = [...new Set(data.map(item => item.subject))];
+                    
+                    // 과목 셀렉트 박스 업데이트
+                    const subjectSelect = document.getElementById('subject-select');
+                    subjectSelect.innerHTML = '<option value="">과목 선택</option>';
+                    
+                    subjects.forEach(subject => {
+                        const option = document.createElement('option');
+                        option.value = subject;
+                        option.textContent = subject;
+                        subjectSelect.appendChild(option);
+                    });
+                    
+                    // 과목 선택 이벤트 리스너
+                    subjectSelect.addEventListener('change', () => {
+                        const selectedSubject = subjectSelect.value;
+                        updateGradeOptions(selectedSubject, data);
+                    });
+                })
+                .catch(error => console.error('카테고리 로딩 중 오류:', error));
+        }
+
+        // 선택한 과목에 따라 학년 옵션 업데이트
+        function updateGradeOptions(subject, categories) {
+            const grades = subject 
+                ? [...new Set(categories.filter(item => item.subject === subject).map(item => item.grade))]
+                : [];
+            
+            const gradeSelect = document.getElementById('grade-select');
+            gradeSelect.innerHTML = '<option value="">학년 선택</option>';
+            gradeSelect.disabled = !subject;
+            
+            grades.forEach(grade => {
+                const option = document.createElement('option');
+                option.value = grade;
+                option.textContent = grade;
+                gradeSelect.appendChild(option);
+            });
+            
+            // 학년 선택 이벤트 리스너
+            gradeSelect.addEventListener('change', () => {
+                const selectedGrade = gradeSelect.value;
+                updateUnitOptions(subject, selectedGrade, categories);
+            });
+            
+            // 단원 선택 초기화
+            const unitSelect = document.getElementById('unit-select');
+            unitSelect.innerHTML = '<option value="">단원 선택</option>';
+            unitSelect.disabled = true;
+        }
+
+        // 선택한 과목과 학년에 따라 단원 옵션 업데이트
+        function updateUnitOptions(subject, grade, categories) {
+            const units = (subject && grade)
+                ? categories.filter(item => item.subject === subject && item.grade === grade).map(item => item.unit)
+                : [];
+            
+            const unitSelect = document.getElementById('unit-select');
+            unitSelect.innerHTML = '<option value="">단원 선택</option>';
+            unitSelect.disabled = !(subject && grade);
+            
+            units.forEach(unit => {
+                const option = document.createElement('option');
+                option.value = unit;
+                option.textContent = unit;
+                unitSelect.appendChild(option);
+            });
+        }
+
+        // 페이지 로드 시 카테고리 가져오기
+        document.addEventListener('DOMContentLoaded', fetchCategories);
     </script>
 </body>
 </html> 
