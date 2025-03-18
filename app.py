@@ -896,6 +896,54 @@ def admin_dashboard():
             print(f"학생별 통계 쿼리 오류: {e}")
             student_stats = []
         
+        # 과목별 통계 데이터 조회 추가
+        try:
+            subject_stats = db.session.query(
+                Answer.subject,
+                func.count(Answer.id).label('total_questions'),
+                func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct_answers'),
+                func.sum(case((Answer.is_correct == False, 1), else_=0)).label('incorrect_answers'),
+                func.round(func.sum(case((Answer.is_correct == True, 1), else_=0)) * 100.0 / func.count(Answer.id), 1).label('accuracy_rate'),
+                func.count(func.distinct(Answer.user_id)).label('unique_students')
+            ).group_by(Answer.subject).all()
+            
+            # 결과 가공
+            subject_stats = [{
+                'subject': stat.subject or '미분류',
+                'total_questions': stat.total_questions,
+                'correct_answers': stat.correct_answers,
+                'incorrect_answers': stat.incorrect_answers,
+                'accuracy_rate': stat.accuracy_rate or 0,
+                'unique_students': stat.unique_students
+            } for stat in subject_stats]
+        except Exception as e:
+            print(f"과목별 통계 쿼리 오류: {e}")
+            subject_stats = []
+        
+        # 학년별 통계 데이터 조회 추가
+        try:
+            grade_stats = db.session.query(
+                Answer.grade,
+                func.count(Answer.id).label('total_questions'),
+                func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct_answers'),
+                func.sum(case((Answer.is_correct == False, 1), else_=0)).label('incorrect_answers'),
+                func.round(func.sum(case((Answer.is_correct == True, 1), else_=0)) * 100.0 / func.count(Answer.id), 1).label('accuracy_rate'),
+                func.count(func.distinct(Answer.user_id)).label('unique_students')
+            ).group_by(Answer.grade).all()
+            
+            # 결과 가공
+            grade_stats = [{
+                'grade': stat.grade or '미분류',
+                'total_questions': stat.total_questions,
+                'correct_answers': stat.correct_answers,
+                'incorrect_answers': stat.incorrect_answers,
+                'accuracy_rate': stat.accuracy_rate or 0,
+                'unique_students': stat.unique_students
+            } for stat in grade_stats]
+        except Exception as e:
+            print(f"학년별 통계 쿼리 오류: {e}")
+            grade_stats = []
+        
         return render_template('admin.html',
                              students=students,
                              selected_student_id=selected_student_id,
@@ -904,7 +952,9 @@ def admin_dashboard():
                              accuracy_rate=accuracy_rate,
                              average_progress=average_progress,
                              unit_stats=unit_stats,
-                             student_stats=student_stats)
+                             student_stats=student_stats,
+                             subject_stats=subject_stats,
+                             grade_stats=grade_stats)
                              
     except Exception as e:
         print(f"Error in admin_dashboard: {str(e)}")
@@ -1328,6 +1378,90 @@ def reset_database():
             return redirect(url_for('admin_dashboard'))
     
     return render_template('reset_database.html')
+
+@app.route('/admin/stats/subject-report')
+@login_required
+def download_subject_stats():
+    if current_user.username != 'admin':
+        flash('관리자 권한이 필요합니다.', 'error')
+        return redirect(url_for('login'))
+    
+    try:
+        # 과목별 통계 데이터 조회
+        subject_stats = db.session.query(
+            Answer.subject,
+            func.count(Answer.id).label('total_questions'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct_answers'),
+            func.sum(case((Answer.is_correct == False, 1), else_=0)).label('incorrect_answers'),
+            func.round(func.sum(case((Answer.is_correct == True, 1), else_=0)) * 100.0 / func.count(Answer.id), 1).label('accuracy_rate'),
+            func.count(func.distinct(Answer.user_id)).label('unique_students')
+        ).group_by(Answer.subject).all()
+        
+        # 데이터 가공
+        subject_stats_data = [{
+            'subject': stat.subject or '미분류',
+            'total_questions': stat.total_questions,
+            'correct_answers': stat.correct_answers,
+            'incorrect_answers': stat.incorrect_answers,
+            'accuracy_rate': stat.accuracy_rate or 0,
+            'unique_students': stat.unique_students
+        } for stat in subject_stats]
+        
+        html = render_template('stats_report.html',
+                             generated_at=datetime.utcnow(),
+                             report_type='subject',
+                             subject_stats=subject_stats_data)
+        
+        response = make_response(html)
+        response.headers['Content-Type'] = 'text/html'
+        response.headers['Content-Disposition'] = f'attachment; filename=subject_stats_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.html'
+        return response
+    except Exception as e:
+        print(f"과목별 통계 다운로드 오류: {e}")
+        flash('통계 다운로드 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin/stats/grade-report')
+@login_required
+def download_grade_stats():
+    if current_user.username != 'admin':
+        flash('관리자 권한이 필요합니다.', 'error')
+        return redirect(url_for('login'))
+    
+    try:
+        # 학년별 통계 데이터 조회
+        grade_stats = db.session.query(
+            Answer.grade,
+            func.count(Answer.id).label('total_questions'),
+            func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct_answers'),
+            func.sum(case((Answer.is_correct == False, 1), else_=0)).label('incorrect_answers'),
+            func.round(func.sum(case((Answer.is_correct == True, 1), else_=0)) * 100.0 / func.count(Answer.id), 1).label('accuracy_rate'),
+            func.count(func.distinct(Answer.user_id)).label('unique_students')
+        ).group_by(Answer.grade).all()
+        
+        # 데이터 가공
+        grade_stats_data = [{
+            'grade': stat.grade or '미분류',
+            'total_questions': stat.total_questions,
+            'correct_answers': stat.correct_answers,
+            'incorrect_answers': stat.incorrect_answers,
+            'accuracy_rate': stat.accuracy_rate or 0,
+            'unique_students': stat.unique_students
+        } for stat in grade_stats]
+        
+        html = render_template('stats_report.html',
+                             generated_at=datetime.utcnow(),
+                             report_type='grade',
+                             grade_stats=grade_stats_data)
+        
+        response = make_response(html)
+        response.headers['Content-Type'] = 'text/html'
+        response.headers['Content-Disposition'] = f'attachment; filename=grade_stats_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.html'
+        return response
+    except Exception as e:
+        print(f"학년별 통계 다운로드 오류: {e}")
+        flash('통계 다운로드 중 오류가 발생했습니다.', 'error')
+        return redirect(url_for('admin_dashboard'))
 
 if __name__ == '__main__':
     app.run(debug=True)

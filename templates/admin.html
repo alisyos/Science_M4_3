@@ -44,8 +44,96 @@
     </div>
 </div>
 
+<!-- 과목별 통계 섹션 -->
+<div class="section mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>과목별 통계</h3>
+        <button onclick="downloadSubjectStatsReport()" class="btn btn-success" style="white-space: nowrap;">
+            과목별 통계 다운로드
+        </button>
+    </div>
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>과목</th>
+                            <th>풀이 문제 수</th>
+                            <th>정답 수</th>
+                            <th>오답 수</th>
+                            <th>정답률</th>
+                            <th>학생 수</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stat in subject_stats %}
+                        <tr>
+                            <td>{{ stat.subject or '미분류' }}</td>
+                            <td>{{ stat.total_questions }}</td>
+                            <td>{{ stat.correct_answers }}</td>
+                            <td>{{ stat.incorrect_answers }}</td>
+                            <td>{{ "%.1f"|format(stat.accuracy_rate) }}%</td>
+                            <td>{{ stat.unique_students }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="text-center">등록된 통계가 없습니다.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 학년별 통계 섹션 -->
+<div class="section mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>학년별 통계</h3>
+        <button onclick="downloadGradeStatsReport()" class="btn btn-success" style="white-space: nowrap;">
+            학년별 통계 다운로드
+        </button>
+    </div>
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>학년</th>
+                            <th>풀이 문제 수</th>
+                            <th>정답 수</th>
+                            <th>오답 수</th>
+                            <th>정답률</th>
+                            <th>학생 수</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stat in grade_stats %}
+                        <tr>
+                            <td>{{ stat.grade or '미분류' }}</td>
+                            <td>{{ stat.total_questions }}</td>
+                            <td>{{ stat.correct_answers }}</td>
+                            <td>{{ stat.incorrect_answers }}</td>
+                            <td>{{ "%.1f"|format(stat.accuracy_rate) }}%</td>
+                            <td>{{ stat.unique_students }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="text-center">등록된 통계가 없습니다.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- 단원별 통계 -->
-<div class="section">
+<div class="section mb-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h3>단원별 통계</h3>
         <div class="d-flex align-items-center">
@@ -63,32 +151,34 @@
             </button>
         </div>
     </div>
-    <div class="card-body">
-        <div class="table-responsive">
-            <table class="table table-striped table-hover">
-                <thead>
-                    <tr>
-                        <th>과목</th>
-                        <th>학년</th>
-                        <th>단원</th>
-                        <th>문제 수</th>
-                        <th>정답률</th>
-                        <th>학생 수</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for stat in unit_stats %}
-                    <tr>
-                        <td>{{ stat.subject }}</td>
-                        <td>{{ stat.grade }}</td>
-                        <td>{{ stat.unit }}</td>
-                        <td>{{ stat.attempts }}</td>
-                        <td>{{ "%.1f"|format(stat.accuracy_rate) }}%</td>
-                        <td>{{ stat.unique_students }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>과목</th>
+                            <th>학년</th>
+                            <th>단원</th>
+                            <th>문제 수</th>
+                            <th>정답률</th>
+                            <th>학생 수</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stat in unit_stats %}
+                        <tr>
+                            <td>{{ stat.subject }}</td>
+                            <td>{{ stat.grade }}</td>
+                            <td>{{ stat.unit }}</td>
+                            <td>{{ stat.attempts }}</td>
+                            <td>{{ "%.1f"|format(stat.accuracy_rate) }}%</td>
+                            <td>{{ stat.unique_students }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
@@ -211,6 +301,14 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 });
+
+function downloadSubjectStatsReport() {
+    window.location.href = '/admin/stats/subject-report';
+}
+
+function downloadGradeStatsReport() {
+    window.location.href = '/admin/stats/grade-report';
+}
 
 function downloadUnitStatsReport() {
     const studentId = document.getElementById('studentSelect').value;

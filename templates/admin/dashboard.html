@@ -1,0 +1,102 @@
+<!-- 과목별 통계 섹션 -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5>과목별 통계</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>과목</th>
+                        <th>출제 문제 수</th>
+                        <th>정답 수</th>
+                        <th>오답 수</th>
+                        <th>정답률</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for subject in subject_stats %}
+                    <tr>
+                        <td>{{ subject.subject or '미분류' }}</td>
+                        <td>{{ subject.total_questions }}</td>
+                        <td>{{ subject.correct_answers }}</td>
+                        <td>{{ subject.incorrect_answers }}</td>
+                        <td>{{ subject.accuracy_rate }}%</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center">등록된 통계가 없습니다.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 학생별 통계 섹션 -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5>학생별 통계</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>학생</th>
+                        <th>총계 (정답수/오답수/정답률)</th>
+                        <th>과학 (정답수/오답수/정답률)</th>
+                        <th>사회 (정답수/오답수/정답률)</th>
+                        <th>한국사 (정답수/오답수/정답률)</th>
+                        <th>학습진도율</th>
+                        <th>작업</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stat in stats %}
+                    <tr>
+                        <td>{{ stat.username }}</td>
+                        <td>
+                            {{ stat.total_correct }}/{{ stat.total_incorrect }}/{{ "%.1f"|format(stat.total_accuracy) }}%
+                        </td>
+                        <td>
+                            {{ stat.science_correct }}/{{ stat.science_incorrect }}/{{ "%.1f"|format(stat.science_accuracy) }}%
+                        </td>
+                        <td>
+                            {{ stat.social_correct }}/{{ stat.social_incorrect }}/{{ "%.1f"|format(stat.social_accuracy) }}%
+                        </td>
+                        <td>
+                            {{ stat.history_correct }}/{{ stat.history_incorrect }}/{{ "%.1f"|format(stat.history_accuracy) }}%
+                        </td>
+                        <td>{{ "%.1f"|format(stat.progress_rate) }}%</td>
+                        <td>
+                            <form action="{{ url_for('delete_stats') }}" method="post" class="d-inline">
+                                <input type="hidden" name="username" value="{{ stat.username }}">
+                                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('정말로 이 학생의 통계를 삭제하시겠습니까?')">통계삭제</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center">등록된 통계가 없습니다.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 기존 단원별 통계 섹션 (있는 경우) -->
+{% if unit_stats %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5>단원별 통계</h5>
+    </div>
+    <div class="card-body">
+        <!-- 기존 단원별 통계 코드 -->
+    </div>
+</div>
+{% endif %} 
