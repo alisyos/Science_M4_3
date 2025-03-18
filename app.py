@@ -26,14 +26,6 @@ app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'dev')
 # 데이터베이스 파일 경로 설정
 db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'quiz.db')
 
-# 기존 데이터베이스 파일 삭제 (SQLite인 경우)
-if os.path.exists(db_path):
-    try:
-        os.remove(db_path)
-        print(f"기존 데이터베이스 파일 {db_path}가 삭제되었습니다.")
-    except Exception as e:
-        print(f"데이터베이스 파일 삭제 중 오류: {e}")
-
 # PostgreSQL 설정
 if os.environ.get('DATABASE_URL'):
     database_url = os.environ.get('DATABASE_URL')
@@ -57,7 +49,7 @@ db.init_app(app)
 
 # 앱 컨텍스트 내에서 데이터베이스 생성
 with app.app_context():
-    # 테이블 생성
+    # 테이블 생성 (테이블이 없는 경우에만 생성됨)
     db.create_all()
     
     # 관리자 계정이 없는 경우 생성
@@ -69,7 +61,7 @@ with app.app_context():
         db.session.commit()
         print("관리자 계정이 생성되었습니다.")
     
-    print("데이터베이스가 초기화되었습니다.")
+    print("데이터베이스가 연결되었습니다.")
 
 # API 키 확인
 api_key = os.getenv('OPENAI_API_KEY')
@@ -858,7 +850,7 @@ def admin_dashboard():
                 Answer.unit,
                 func.count(Answer.id).label('attempts'),
                 func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-                func.count(distinct(Answer.user_id)).label('unique_students')
+                func.count(func.distinct(Answer.user_id)).label('unique_students')
             )
             
             # 필터 적용
@@ -919,11 +911,15 @@ def admin_dashboard():
                 func.count(func.distinct(Answer.user_id)).label('unique_students')
             )
             
-            # 필터 적용
-            for filter_condition in base_query_filter:
-                if not isinstance(filter_condition, type(Answer.subject == selected_subject)):
-                    # subject 필터는 과목별 통계에서 제외
-                    subject_stats_query = subject_stats_query.filter(filter_condition)
+            # 학생 필터와 학년 필터만 적용 (과목 필터는 제외)
+            if selected_student_id:
+                subject_stats_query = subject_stats_query.filter(Answer.user_id == selected_student_id)
+            if selected_grade:
+                subject_stats_query = subject_stats_query.filter(Answer.grade == selected_grade)
+            
+            # 과목 필터가 있는 경우, 해당 과목만 표시
+            if selected_subject:
+                subject_stats_query = subject_stats_query.filter(Answer.subject == selected_subject)
             
             subject_stats = subject_stats_query.group_by(Answer.subject).all()
             
@@ -951,11 +947,15 @@ def admin_dashboard():
                 func.count(func.distinct(Answer.user_id)).label('unique_students')
             )
             
-            # 필터 적용
-            for filter_condition in base_query_filter:
-                if not isinstance(filter_condition, type(Answer.grade == selected_grade)):
-                    # grade 필터는 학년별 통계에서 제외
-                    grade_stats_query = grade_stats_query.filter(filter_condition)
+            # 학생 필터와 과목 필터만 적용 (학년 필터는 제외)
+            if selected_student_id:
+                grade_stats_query = grade_stats_query.filter(Answer.user_id == selected_student_id)
+            if selected_subject:
+                grade_stats_query = grade_stats_query.filter(Answer.subject == selected_subject)
+            
+            # 학년 필터가 있는 경우, 해당 학년만 표시
+            if selected_grade:
+                grade_stats_query = grade_stats_query.filter(Answer.grade == selected_grade)
             
             grade_stats = grade_stats_query.group_by(Answer.grade).all()
             
@@ -1220,7 +1220,7 @@ def download_unit_stats():
             Answer.unit,
             func.count(Answer.id).label('attempts'),
             func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-            func.count(distinct(Answer.user_id)).label('unique_students')
+            func.count(func.distinct(Answer.user_id)).label('unique_students')
         )
         
         if student_id:
@@ -1253,7 +1253,7 @@ def download_unit_stats():
             Answer.sub_unit,
             func.count(Answer.id).label('attempts'),
             func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-            func.count(distinct(Answer.user_id)).label('unique_students')
+            func.count(func.distinct(Answer.user_id)).label('unique_students')
         )
         
         if student_id:
@@ -1364,21 +1364,17 @@ def download_statistics():
             func.count(func.distinct(Answer.user_id)).label('unique_students')
         )
         
-        # 필터 적용 (subject 필터 제외)
-        for filter_condition in base_query_filter:
-            if not isinstance(filter_condition, type(Answer.subject == selected_subject)):
-                subject_stats_query = subject_stats_query.filter(filter_condition)
+        # 학생 필터와 학년 필터 적용
+        if selected_student_id:
+            subject_stats_query = subject_stats_query.filter(Answer.user_id == selected_student_id)
+        if selected_grade:
+            subject_stats_query = subject_stats_query.filter(Answer.grade == selected_grade)
+        
+        # 과목 필터 적용
+        if selected_subject:
+            subject_stats_query = subject_stats_query.filter(Answer.subject == selected_subject)
         
         subject_stats = subject_stats_query.group_by(Answer.subject).all()
-        
-        subject_stats_data = [{
-            'subject': stat.subject or '미분류',
-            'total_questions': stat.total_questions,
-            'correct_answers': stat.correct_answers,
-            'incorrect_answers': stat.incorrect_answers,
-            'accuracy_rate': stat.accuracy_rate or 0,
-            'unique_students': stat.unique_students
-        } for stat in subject_stats]
         
         # 3. 학년별 통계
         grade_stats_query = db.session.query(
@@ -1390,52 +1386,17 @@ def download_statistics():
             func.count(func.distinct(Answer.user_id)).label('unique_students')
         )
         
-        # 필터 적용 (grade 필터 제외)
-        for filter_condition in base_query_filter:
-            if not isinstance(filter_condition, type(Answer.grade == selected_grade)):
-                grade_stats_query = grade_stats_query.filter(filter_condition)
+        # 학생 필터와 과목 필터 적용
+        if selected_student_id:
+            grade_stats_query = grade_stats_query.filter(Answer.user_id == selected_student_id)
+        if selected_subject:
+            grade_stats_query = grade_stats_query.filter(Answer.subject == selected_subject)
+        
+        # 학년 필터 적용
+        if selected_grade:
+            grade_stats_query = grade_stats_query.filter(Answer.grade == selected_grade)
         
         grade_stats = grade_stats_query.group_by(Answer.grade).all()
-        
-        grade_stats_data = [{
-            'grade': stat.grade or '미분류',
-            'total_questions': stat.total_questions,
-            'correct_answers': stat.correct_answers,
-            'incorrect_answers': stat.incorrect_answers,
-            'accuracy_rate': stat.accuracy_rate or 0,
-            'unique_students': stat.unique_students
-        } for stat in grade_stats]
-        
-        # 4. 단원별 통계
-        try:
-            unit_stats_query = db.session.query(
-                Answer.subject,
-                Answer.grade,
-                Answer.unit,
-                func.count(Answer.id).label('attempts'),
-                func.sum(case((Answer.is_correct == True, 1), else_=0)).label('correct'),
-                func.count(distinct(Answer.user_id)).label('unique_students')
-            )
-            
-            # 필터 적용
-            for filter_condition in base_query_filter:
-                unit_stats_query = unit_stats_query.filter(filter_condition)
-            
-            unit_stats = unit_stats_query.group_by(Answer.subject, Answer.grade, Answer.unit).all()
-            
-            unit_stats_data = [{
-                'subject': stat.subject or '미분류',
-                'grade': stat.grade or '',
-                'unit': stat.unit or '',
-                'name': f"{stat.subject or '미분류'} - {stat.grade or ''} - {stat.unit or ''}",
-                'attempts': stat.attempts,
-                'correct': stat.correct,
-                'accuracy_rate': (stat.correct / stat.attempts * 100) if stat.attempts > 0 else 0,
-                'unique_students': stat.unique_students
-            } for stat in unit_stats]
-        except Exception as e:
-            print(f"단원별 통계 조회 오류: {e}")
-            unit_stats_data = []
         
         # 필터 정보 문자열 생성
         filter_info = []
@@ -1457,9 +1418,8 @@ def download_statistics():
                              selected_grade=selected_grade,
                              filter_text=filter_text,
                              student_stats=student_stats,
-                             subject_stats=subject_stats_data,
-                             grade_stats=grade_stats_data,
-                             unit_stats=unit_stats_data)
+                             subject_stats=subject_stats,
+                             grade_stats=grade_stats)
         
         response = make_response(html)
         response.headers['Content-Type'] = 'text/html'
@@ -1536,9 +1496,15 @@ def download_subject_stats():
             func.count(func.distinct(Answer.user_id)).label('unique_students')
         )
         
-        # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
+        # 학생 필터와 학년 필터만 적용 (과목 필터는 제외)
         if selected_student_id:
             subject_stats_query = subject_stats_query.filter(Answer.user_id == selected_student_id)
+        if selected_grade:
+            subject_stats_query = subject_stats_query.filter(Answer.grade == selected_grade)
+        
+        # 과목 필터가 있는 경우, 해당 과목만 표시
+        if selected_subject:
+            subject_stats_query = subject_stats_query.filter(Answer.subject == selected_subject)
         
         subject_stats = subject_stats_query.group_by(Answer.subject).all()
         
@@ -1584,13 +1550,19 @@ def download_grade_stats():
             func.count(func.distinct(Answer.user_id)).label('unique_students')
         )
         
-        # 선택된 학생이 있는 경우 해당 학생의 통계만 조회
+        # 학생 필터와 과목 필터만 적용 (학년 필터는 제외)
         if selected_student_id:
             grade_stats_query = grade_stats_query.filter(Answer.user_id == selected_student_id)
+        if selected_subject:
+            grade_stats_query = grade_stats_query.filter(Answer.subject == selected_subject)
+        
+        # 학년 필터가 있는 경우, 해당 학년만 표시
+        if selected_grade:
+            grade_stats_query = grade_stats_query.filter(Answer.grade == selected_grade)
         
         grade_stats = grade_stats_query.group_by(Answer.grade).all()
         
-        # 데이터 가공
+        # 결과 가공
         grade_stats_data = [{
             'grade': stat.grade or '미분류',
             'total_questions': stat.total_questions,
