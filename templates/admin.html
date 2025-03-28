@@ -303,14 +303,14 @@ document.addEventListener('DOMContentLoaded', function() {
         const subject = document.getElementById('subjectSelect').value;
         const grade = document.getElementById('gradeSelect').value;
         
-        const url = new URL(window.location.href);
+    const url = new URL(window.location.href);
         
         // 학생 필터 적용
-        if (studentId) {
-            url.searchParams.set('student_id', studentId);
-        } else {
-            url.searchParams.delete('student_id');
-        }
+    if (studentId) {
+        url.searchParams.set('student_id', studentId);
+    } else {
+        url.searchParams.delete('student_id');
+    }
         
         // 과목 필터 적용
         if (subject) {
@@ -326,8 +326,8 @@ document.addEventListener('DOMContentLoaded', function() {
             url.searchParams.delete('grade');
         }
         
-        window.location.href = url.toString();
-    }
+    window.location.href = url.toString();
+}
 
     // 개별 통계 삭제
     document.querySelectorAll('.delete-stats').forEach(button => {
@@ -349,14 +349,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
             }
         });
+        });
     });
-});
 
 document.getElementById('standardizeUnits').addEventListener('click', function() {
     if (confirm('단원명을 표준화하시겠습니까?')) {
         fetch('/admin/stats/standardize-units', {
-            method: 'POST',
-            headers: {
+                method: 'POST',
+                headers: {
                 'Content-Type': 'application/json'
             }
         })
@@ -364,17 +364,17 @@ document.getElementById('standardizeUnits').addEventListener('click', function()
         .then(data => {
             if (data.success) {
                 alert(`단원명 표준화가 완료되었습니다. ${data.standardized_count}개의 레코드가 수정되었습니다.`);
-                location.reload();
-            } else {
+                    location.reload();
+                } else {
                 alert(data.error || '오류가 발생했습니다.');
-            }
+                }
         })
         .catch(error => {
-            console.error('Error:', error);
+                console.error('Error:', error);
             alert('오류가 발생했습니다.');
-        });
-    }
-});
+            });
+        }
+    });
 
 // 단원별 통계 차트
 var unitStatsCtx = document.getElementById('unitStatsChart').getContext('2d');
@@ -452,4 +452,4 @@ function downloadCompleteStats() {
     window.location.href = url;
 }
 </script>
-{% endblock %}
+{% endblock %} 

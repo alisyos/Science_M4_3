@@ -187,6 +187,27 @@
                             <button id="apply-filter-btn" class="btn btn-primary btn-sm">적용</button>
                         </div>
                     </div>
+                    
+                    <!-- 문제 유형 선택 추가 -->
+                    <div class="row g-2 mt-2">
+                        <div class="col-md-12">
+                            <label class="form-label form-label-sm">문제 유형:</label>
+                            <div class="d-flex">
+                                <div class="form-check me-3">
+                                    <input class="form-check-input" type="checkbox" id="type-multiple" value="객관식" checked>
+                                    <label class="form-check-label" for="type-multiple">객관식</label>
+                                </div>
+                                <div class="form-check me-3">
+                                    <input class="form-check-input" type="checkbox" id="type-short" value="단답형">
+                                    <label class="form-check-label" for="type-short">단답형</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="type-blank" value="빈칸채우기">
+                                    <label class="form-check-label" for="type-blank">빈칸채우기</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         {% else %}
@@ -221,6 +242,7 @@
         let selectedSubject = '';  // 선택된 과목
         let selectedGrade = '';    // 선택된 학년
         let selectedUnit = '';     // 선택된 단원
+        let selectedQuestionTypes = ['객관식']; // 기본값으로 객관식 선택
 
         // 단원 데이터 정의
         const unitData = {
@@ -486,6 +508,7 @@
                 buttonDiv.className = 'message assistant';
                 buttonDiv.innerHTML = `
                     <div class="message-content">
+                        <p>원하는 문제 유형을 선택하고 문제를 출제해주세요.</p>
                         <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('1문제 출제')">1문제 출제</button>
                         <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('5문제 출제')">5문제 출제</button>
                         <button class="btn btn-primary me-2" onclick="chatManager.startQuiz('10문제 출제')">10문제 출제</button>
@@ -556,30 +579,13 @@
                     
                     const loadingId = this.appendLoadingMessage();
 
-                    // thread_id가 없는 경우 새로운 thread 생성
-                    if (!this.threadId) {
-                        const threadResponse = await fetch('/api/quiz/new', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                                message: 'init'
-                            })
-                        });
-                        const threadData = await threadResponse.json();
-                        if (threadData.thread_id) {
-                            this.threadId = threadData.thread_id;
-                        }
-                    }
-
-                    // 단원 필터 추가
+                    // 요청 데이터 준비
                     const requestData = {
                         thread_id: this.threadId,
                         message: buttonText
                     };
 
-                    // 선택된 과목, 학년, 단원이 있으면 추가
+                    // 단원 필터 추가
                     if (selectedSubject) {
                         requestData.subject = selectedSubject;
                     }
@@ -589,9 +595,15 @@
                     if (selectedUnit) {
                         requestData.unit = selectedUnit;
                     }
+                    
+                    // 문제 유형 추가
+                    if (selectedQuestionTypes && selectedQuestionTypes.length > 0) {
+                        requestData.question_types = selectedQuestionTypes;
+                    }
+                    
+                    console.log('요청 데이터:', requestData);
 
-                    console.log('요청 데이터:', requestData); // 디버깅용 로그 추가
-
+                    // 단일 API 호출로 통합: /api/chat 엔드포인트만 사용
                     const response = await fetch('/api/chat', {
                         method: 'POST',
                         headers: {
@@ -616,48 +628,7 @@
                     }
                     
                     if (data.type === 'QUIZ') {
-                        const messagesContainer = document.getElementById('chat-messages');
-                        const quizDiv = document.createElement('div');
-                        quizDiv.className = 'message assistant';
-                        
-                        // 현재 문제와 총 문제 수 설정
-                        const currentQuestion = data.progress ? data.progress.current : 1;
-                        const totalQuestions = data.progress ? data.progress.total : 1;
-                        const quiz = data.quiz || (data.questions && data.questions[0]);
-                        
-                        if (!quiz) {
-                            console.error('퀴즈 데이터 형식 오류:', data);
-                            this.appendMessage('퀴즈 데이터 형식이 올바르지 않습니다.', 'text', 'assistant');
-                            return;
-                        }
-                        
-                        let quizHTML = '<div class="quiz-message">';
-                        quizHTML += `
-                            <div class="mb-4 p-3" style="border: 1px solid #dee2e6; border-radius: 10px;">
-                                <div class="badge bg-secondary mb-2">${currentQuestion}/${totalQuestions}번 문제</div>
-                                <div class="badge bg-primary ms-2">${quiz.subject || '과학'}</div>
-                                <div class="badge bg-info ms-2">${quiz.grade || ''}</div>
-                                <div class="badge bg-warning ms-2">${quiz.unit || ''}</div>
-                                <div class="mt-2 mb-3">${quiz.question}</div>
-                                <div class="quiz-options" style="display: grid; gap: 0.3rem; margin-top: 0.5rem;">
-                                    ${quiz.options.map((option, optionIndex) => `
-                                        <div class="option-item" 
-                                             style="cursor: pointer; padding: 8px; margin: 2px 0; border: 1px solid #dee2e6; border-radius: 8px; background-color: white; transition: all 0.2s;"
-                                             onmouseover="this.style.backgroundColor='#e9ecef'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'"
-                                             onmouseout="this.style.backgroundColor='white'; this.style.boxShadow='none'"
-                                             onclick="chatManager.submitAnswer(${currentQuestion}, '${option}')">
-                                            ${option}
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            </div>
-                        `;
-                        
-                        quizHTML += `</div>`;
-                        
-                        quizDiv.innerHTML = quizHTML;
-                        messagesContainer.appendChild(quizDiv);
-                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                        this.displayQuiz(data);
                     }
                 } catch (error) {
                     console.error('Error starting quiz:', error);
@@ -678,6 +649,106 @@
                     if (gradeSelect) gradeSelect.disabled = false;
                     if (unitSelect) unitSelect.disabled = false;
                     if (applyFilterBtn) applyFilterBtn.disabled = false;
+                }
+            },
+
+            displayQuiz(data) {
+                const messagesContainer = document.getElementById('chat-messages');
+                const quizDiv = document.createElement('div');
+                quizDiv.className = 'message assistant';
+                
+                // 현재 문제와 총 문제 수 설정
+                const currentQuestion = data.progress ? data.progress.current : 1;
+                const totalQuestions = data.progress ? data.progress.total : 1;
+                const quiz = data.quiz || (data.questions && data.questions[0]);
+                
+                if (!quiz) {
+                    console.error('퀴즈 데이터 형식 오류:', data);
+                    this.appendMessage('퀴즈 데이터 형식이 올바르지 않습니다.', 'text', 'assistant');
+                    return;
+                }
+                
+                // 쓰레드 ID 업데이트
+                if (data.thread_id) {
+                    this.threadId = data.thread_id;
+                }
+                
+                // 문제 유형 확인 (기본값은 객관식)
+                const questionType = quiz.question_type || '객관식';
+                
+                let quizHTML = '<div class="quiz-message">';
+                quizHTML += `
+                    <div class="mb-4 p-3" style="border: 1px solid #dee2e6; border-radius: 10px;">
+                        <div class="badge bg-secondary mb-2">${currentQuestion}/${totalQuestions}번 문제</div>
+                        <div class="badge bg-primary ms-2">${quiz.subject || '과학'}</div>
+                        <div class="badge bg-info ms-2">${quiz.grade || ''}</div>
+                        <div class="badge bg-warning ms-2">${quiz.unit || ''}</div>
+                        <div class="badge bg-dark ms-2">${questionType}</div>
+                        <div class="mt-2 mb-3">${quiz.question}</div>
+                `;
+                
+                // 문제 유형에 따라 다른 UI 표시
+                if (questionType === '객관식') {
+                    quizHTML += `
+                        <div class="quiz-options" style="display: grid; gap: 0.3rem; margin-top: 0.5rem;">
+                            ${quiz.options.map((option, optionIndex) => `
+                                <div class="option-item" 
+                                     style="cursor: pointer; padding: 8px; margin: 2px 0; border: 1px solid #dee2e6; border-radius: 8px; background-color: white; transition: all 0.2s;"
+                                     onmouseover="this.style.backgroundColor='#e9ecef'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'"
+                                     onmouseout="this.style.backgroundColor='white'; this.style.boxShadow='none'"
+                                     onclick="chatManager.submitAnswer(${currentQuestion}, '${option}')">
+                                    ${option}
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else if (questionType === '단답형') {
+                    quizHTML += `
+                        <div class="short-answer-input">
+                            <div class="form-group">
+                                <input type="text" class="form-control mb-2" id="short-answer-${currentQuestion}" placeholder="답변을 입력하세요">
+                                <button class="btn btn-primary" onclick="chatManager.submitShortAnswer(${currentQuestion})">답변 제출</button>
+                            </div>
+                        </div>
+                    `;
+                } else if (questionType === '빈칸채우기') {
+                    quizHTML += `
+                        <div class="fill-blank-input">
+                            <div class="form-group">
+                                <input type="text" class="form-control mb-2" id="fill-blank-${currentQuestion}" placeholder="빈칸에 들어갈 내용을 입력하세요">
+                                <button class="btn btn-primary" onclick="chatManager.submitFillBlank(${currentQuestion})">답변 제출</button>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                quizHTML += `</div></div>`;
+                
+                quizDiv.innerHTML = quizHTML;
+                messagesContainer.appendChild(quizDiv);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                
+                // 단답형이나 빈칸 채우기인 경우 입력 필드에 포커스
+                if (questionType === '단답형') {
+                    setTimeout(() => {
+                        document.getElementById(`short-answer-${currentQuestion}`)?.focus();
+                    }, 100);
+                } else if (questionType === '빈칸채우기') {
+                    setTimeout(() => {
+                        document.getElementById(`fill-blank-${currentQuestion}`)?.focus();
+                    }, 100);
+                }
+                
+                // 문제 정보 저장
+                if (quiz) {
+                    // 현재 퀴즈 정보 저장
+                    current_quiz_store[this.threadId] = {
+                        'quiz': quiz,
+                        'progress': {
+                            'current': currentQuestion,
+                            'total': totalQuestions
+                        }
+                    };
                 }
             },
 
@@ -723,16 +794,26 @@
                                 const quizDiv = document.createElement('div');
                                 quizDiv.className = 'message assistant';
                                 
+                                // 문제 유형 확인 (기본값은 객관식)
+                                const nextQuiz = data.next_question.quiz;
+                                const questionType = nextQuiz.question_type || '객관식';
+                                
                                 let quizHTML = '<div class="quiz-message">';
                                 quizHTML += `
                                     <div class="mb-4 p-3" style="border: 1px solid #dee2e6; border-radius: 10px;">
                                         <div class="badge bg-secondary mb-2">${data.next_question.progress.current}/${data.next_question.progress.total}번 문제</div>
-                                        <div class="badge bg-primary ms-2">${data.next_question.quiz.subject || '과학'}</div>
-                                        <div class="badge bg-info ms-2">${data.next_question.quiz.grade || ''}</div>
-                                        <div class="badge bg-warning ms-2">${data.next_question.quiz.unit || ''}</div>
-                                        <div class="mt-2 mb-3">${data.next_question.quiz.question}</div>
+                                        <div class="badge bg-primary ms-2">${nextQuiz.subject || '과학'}</div>
+                                        <div class="badge bg-info ms-2">${nextQuiz.grade || ''}</div>
+                                        <div class="badge bg-warning ms-2">${nextQuiz.unit || ''}</div>
+                                        <div class="badge bg-dark ms-2">${questionType}</div>
+                                        <div class="mt-2 mb-3">${nextQuiz.question}</div>
+                                `;
+                                
+                                // 문제 유형에 따라 다른 UI 표시
+                                if (questionType === '객관식') {
+                                    quizHTML += `
                                         <div class="quiz-options" style="display: grid; gap: 0.3rem; margin-top: 0.5rem;">
-                                            ${data.next_question.quiz.options.map((option, optionIndex) => `
+                                            ${nextQuiz.options.map((option, optionIndex) => `
                                                 <div class="option-item" 
                                                      style="cursor: pointer; padding: 8px; margin: 2px 0; border: 1px solid #dee2e6; border-radius: 8px; background-color: white; transition: all 0.2s;"
                                                      onmouseover="this.style.backgroundColor='#e9ecef'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'"
@@ -742,12 +823,43 @@
                                                 </div>
                                             `).join('')}
                                         </div>
-                                    </div>
-                                </div>`;
+                                    `;
+                                } else if (questionType === '단답형') {
+                                    quizHTML += `
+                                        <div class="short-answer-input">
+                                            <div class="form-group">
+                                                <input type="text" class="form-control mb-2" id="short-answer-${data.next_question.progress.current}" placeholder="답변을 입력하세요">
+                                                <button class="btn btn-primary" onclick="chatManager.submitShortAnswer(${data.next_question.progress.current})">답변 제출</button>
+                                            </div>
+                                        </div>
+                                    `;
+                                } else if (questionType === '빈칸채우기') {
+                                    quizHTML += `
+                                        <div class="fill-blank-input">
+                                            <div class="form-group">
+                                                <input type="text" class="form-control mb-2" id="fill-blank-${data.next_question.progress.current}" placeholder="빈칸에 들어갈 내용을 입력하세요">
+                                                <button class="btn btn-primary" onclick="chatManager.submitFillBlank(${data.next_question.progress.current})">답변 제출</button>
+                                            </div>
+                                        </div>
+                                    `;
+                                }
+                                
+                                quizHTML += `</div></div>`;
                                 
                                 quizDiv.innerHTML = quizHTML;
                                 document.getElementById('chat-messages').appendChild(quizDiv);
                                 document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight;
+                                
+                                // 단답형이나 빈칸 채우기인 경우 입력 필드에 포커스
+                                if (questionType === '단답형') {
+                                    setTimeout(() => {
+                                        document.getElementById(`short-answer-${data.next_question.progress.current}`)?.focus();
+                                    }, 100);
+                                } else if (questionType === '빈칸채우기') {
+                                    setTimeout(() => {
+                                        document.getElementById(`fill-blank-${data.next_question.progress.current}`)?.focus();
+                                    }, 100);
+                                }
                                 
                                 // 단원 선택 컨트롤 활성화 상태 유지
                                 const subjectSelect = document.getElementById('subject-select');
@@ -931,6 +1043,7 @@
                                 <div class="badge bg-primary ms-2">${content.subject || '과학'}</div>
                                 <div class="badge bg-info ms-2">${content.grade || ''}</div>
                                 <div class="badge bg-warning ms-2">${content.unit || ''}</div>
+                                <div class="badge bg-dark ms-2">${content.question_type || '객관식'}</div>
                                 <div class="mt-2 mb-3">${content.question}</div>
                                 <div class="quiz-options" style="display: grid; gap: 0.3rem; margin-top: 0.5rem;">
                                     ${content.options.map((option, optionIndex) => `
@@ -1006,6 +1119,24 @@
                 const messageDiv = document.getElementById(messageId);
                 if (messageDiv) {
                     messageDiv.remove();
+                }
+            },
+
+            submitShortAnswer(questionNumber) {
+                const answerInput = document.getElementById(`short-answer-${questionNumber}`);
+                if (answerInput && answerInput.value.trim()) {
+                    this.submitAnswer(questionNumber, answerInput.value.trim());
+                } else {
+                    alert('답변을 입력해주세요.');
+                }
+            },
+
+            submitFillBlank(questionNumber) {
+                const answerInput = document.getElementById(`fill-blank-${questionNumber}`);
+                if (answerInput && answerInput.value.trim()) {
+                    this.submitAnswer(questionNumber, answerInput.value.trim());
+                } else {
+                    alert('빈칸에 들어갈 내용을 입력해주세요.');
                 }
             }
         };
@@ -1112,22 +1243,46 @@
                     const gradeSelect = document.getElementById('grade-select');
                     const unitSelect = document.getElementById('unit-select');
                     
+                    // 선택된 문제 유형 가져오기
+                    const typeMultiple = document.getElementById('type-multiple').checked;
+                    const typeShort = document.getElementById('type-short').checked;
+                    const typeBlank = document.getElementById('type-blank').checked;
+                    
+                    // 선택된 문제 유형 배열 생성
+                    selectedQuestionTypes = [];
+                    if (typeMultiple) selectedQuestionTypes.push('객관식');
+                    if (typeShort) selectedQuestionTypes.push('단답형');
+                    if (typeBlank) selectedQuestionTypes.push('빈칸채우기');
+                    
+                    // 선택된 유형이 없으면 기본값으로 객관식 설정
+                    if (selectedQuestionTypes.length === 0) {
+                        selectedQuestionTypes.push('객관식');
+                        document.getElementById('type-multiple').checked = true;
+                    }
+                    
                     selectedSubject = subjectSelect.value;
                     selectedGrade = gradeSelect.value;
                     selectedUnit = unitSelect.value;
                     
                     let message = '';
                     if (selectedSubject && selectedGrade && selectedUnit) {
-                        message = `${selectedSubject} ${selectedGrade} ${selectedUnit} 단원의 문제를 출제합니다.`;
+                        message = `${selectedSubject} ${selectedGrade} ${selectedUnit} 단원의 `;
                     } else if (selectedSubject && selectedGrade) {
-                        message = `${selectedSubject} ${selectedGrade} 학년의 문제를 출제합니다.`;
+                        message = `${selectedSubject} ${selectedGrade} 학년의 `;
                     } else if (selectedSubject) {
-                        message = `${selectedSubject} 과목의 문제를 출제합니다.`;
+                        message = `${selectedSubject} 과목의 `;
                     } else {
-                        message = '모든 과목의 문제를 출제합니다.';
+                        message = '모든 과목의 ';
                     }
                     
-                    console.log('필터 적용됨:', selectedSubject, selectedGrade, selectedUnit); // 디버깅용 로그 추가
+                    // 선택된 문제 유형 설명 추가
+                    if (selectedQuestionTypes.length === 1) {
+                        message += `${selectedQuestionTypes[0]} 문제를 출제합니다.`;
+                    } else {
+                        message += `${selectedQuestionTypes.join(', ')} 유형의 문제를 출제합니다.`;
+                    }
+                    
+                    console.log('필터 적용됨:', selectedSubject, selectedGrade, selectedUnit, selectedQuestionTypes);
                     
                     // 메시지와 버튼을 함께 추가
                     const messagesContainer = document.getElementById('chat-messages');

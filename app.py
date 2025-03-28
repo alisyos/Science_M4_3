@@ -12,6 +12,19 @@ import os
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_login import UserMixin
 import re
+import traceback
+import logging
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("quiz_app.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # 환경 변수 로드
 load_dotenv()
@@ -77,248 +90,383 @@ client = OpenAI(
     base_url="https://api.openai.com/v1"  # 기본 OpenAI API 엔드포인트 사용
 )
 
-# 전역 변수로 current_quiz 저장
+# 전역 변수로 current_quiz_store 저장
 current_quiz_store = {}
+
+# 쓰레드 ID별 활성 요청 상태 추적
+active_requests = {}
+
+# 임시 파일 저장 디렉토리 확인 및 생성
+temp_dir = os.path.join(os.path.dirname(__file__), 'temp')
+if not os.path.exists(temp_dir):
+    os.makedirs(temp_dir)
+
+# 타임아웃 클래스 추가
+class TimeoutError(Exception):
+    """요청 시간이 초과되었을 때 발생하는 예외"""
+    pass
 
 # ScienceQuizBot 클래스 정의
 class ScienceQuizBot:
     def __init__(self):
-        self.assistant_id = os.getenv('ASSISTANT_ID')
-        self.current_quiz = None
+        # 시스템 프롬프트를 제거하고 Assistant API의 설정을 활용합니다
+        # self.system_prompt는 사용하지 않도록 수정
+        self.assistant_id = os.environ.get("ASSISTANT_ID")
         if not self.assistant_id:
-            raise ValueError("Assistant ID not found in environment variables")
+            raise ValueError("ASSISTANT_ID 환경변수가 설정되지 않았습니다.")
+        
+        # 다른 초기화 코드는 유지...
 
-    def get_quiz(self, thread_id, question_count=1, main_unit=None, sub_unit=None):
+    def get_quiz(self, thread_id, question_count=1, main_unit=None, sub_unit=None, question_types=None):
+        logger.info(f"문제 출제 요청: thread_id={thread_id}, 문제 수={question_count}, 과목={main_unit}, 학년={sub_unit}, 문제 유형={question_types}")
         try:
-            # 단원 필터링 조건 추가
-            unit_filter = ""
-            if main_unit and sub_unit:
-                unit_filter = f"""대단원은 '{main_unit}'이고 소단원은 '{sub_unit}'인 문제만 출제해주세요.
-반드시 main_unit 필드에는 '{main_unit}'을, sub_unit 필드에는 '{sub_unit}'을 정확히 입력해야 합니다."""
-            elif main_unit:
-                unit_filter = f"""대단원이 '{main_unit}'인 문제만 출제해주세요.
-반드시 main_unit 필드에는 '{main_unit}'을 정확히 입력해야 합니다."""
+            # 기본값 설정
+            if question_types is None or len(question_types) == 0:
+                question_types = ['객관식']
             
-            # 명확한 퀴즈 생성 요청
-            prompt = f"""중학교 과학 관련 문제를 {question_count}개 출제해주세요.
-{unit_filter}
-
-반드시 다음 JSON 형식을 정확히 따라야 합니다:
-
-{{
-  "type": "QUIZ",
-  "questions": [
-    {{
-      "main_unit": "대단원명",
-      "sub_unit": "소단원명",
-      "question": "문제 내용",
-      "options": ["① 보기1", "② 보기2", "③ 보기3", "④ 보기4", "⑤ 보기5"],
-      "correct": "정답",
-      "type": "용어 정의",
-      "explanation": "해설"
-    }}
-  ]
-}}
-
-중요 규칙:
-1. questions 배열에 정확히 {question_count}개의 문제가 있어야 합니다.
-2. 각 문제는 반드시 main_unit, sub_unit, question, options, correct, type, explanation 필드를 모두 포함해야 합니다.
-3. options 배열은 정확히 5개의 보기를 포함해야 합니다.
-4. correct는 반드시 options 배열의 요소 중 하나와 정확히 일치해야 합니다.
-5. 단원 정보는 반드시 정확하게 입력해야 합니다."""
-
             print("=== 전송하는 프롬프트 ===")
+            
+            # 스레드 ID가 없는 경우 새로 생성
+            if not thread_id:
+                print("get_quiz에서 새 스레드 ID 생성")
+                thread = client.beta.threads.create()
+                thread_id = thread.id
+                print(f"생성된 Thread ID: {thread_id}")
+            
+            # 단위 파라미터 준비
+            subject = main_unit
+            grade = sub_unit
+            
+            # 프롬프트 준비
+            prompt_parts = []
+            if subject:
+                prompt_parts.append(f"과목: {subject}")
+            if grade:
+                prompt_parts.append(f"학년: {grade}")
+            
+            # 문제 유형 텍스트 구성
+            type_text = "문제 유형: "
+            if len(question_types) == 1:
+                type_text += question_types[0]
+            else:
+                type_text += ", ".join(question_types[:-1]) + " 및 " + question_types[-1]
+            prompt_parts.append(type_text)
+            
+            # 문제 수 지정
+            prompt_parts.append(f"{question_count}개의 문제를 출제해주세요.")
+            prompt = "\n".join(prompt_parts)
+            
             print(prompt)
             print("========================")
-
-            client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content=prompt
-            )
             
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=self.assistant_id
-            )
-            
-            while True:
-                run_status = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
-                if run_status.status == 'completed':
-                    break
-                time.sleep(1)
-            
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            response_text = messages.data[0].content[0].text.value
-            
-            # 마크다운 코드 블록 제거
-            if response_text.startswith('```'):
-                response_text = response_text.split('```')[1]
-                if response_text.startswith('json'):
-                    response_text = response_text[4:].strip()
-            
-            print(f"Cleaned response text: {response_text}")
-            
+            # 사용자 메시지 추가
             try:
-                response = json.loads(response_text)
-                if response.get('type') == 'QUIZ' and 'questions' in response:
-                    questions = response['questions']
-                    
-                    # 단원 필터링 검증
-                    if main_unit or sub_unit:
-                        valid_questions = []
-                        for q in questions:
-                            if main_unit and sub_unit:
-                                if q.get('main_unit') == main_unit and q.get('sub_unit') == sub_unit:
-                                    valid_questions.append(q)
-                            elif main_unit:
-                                if q.get('main_unit') == main_unit:
-                                    valid_questions.append(q)
-                        
-                        # 유효한 문제가 없거나 요청한 수보다 적으면 다시 요청
-                        if not valid_questions or len(valid_questions) < question_count:
-                            print(f"단원 필터링 조건에 맞는 문제가 부족합니다. 다시 요청합니다.")
-                            return self.get_quiz(thread_id, question_count, main_unit, sub_unit)
-                        
-                        # 유효한 문제만 사용
-                        questions = valid_questions[:question_count]
-                    
-                    if len(questions) != question_count:
-                        print(f"Expected {question_count} questions but got {len(questions)}")
-                        return self.get_quiz(thread_id, question_count, main_unit, sub_unit)
-                    
-                    return {
-                        'type': 'QUIZ',
-                        'questions': questions,
-                        'current_question': 0,
-                        'total_questions': len(questions)
-                    }
-                
-                # 형식이 맞지 않는 경우 재시도
-                return self.get_quiz(thread_id, question_count, main_unit, sub_unit)
-                
-            except json.JSONDecodeError as e:
-                print(f"JSON decode error: {e}")
-                print(f"Response text: {response_text}")
-                # JSON 파싱 실패 시 재시도
-                return self.get_quiz(thread_id, question_count, main_unit, sub_unit)
+                client.beta.threads.messages.create(
+                    thread_id=thread_id,
+                    role="user",
+                    content=prompt
+                )
+            except Exception as e:
+                print(f"메시지 생성 에러: {str(e)}")
+                return {"type": "ERROR", "message": f"메시지 생성 에러: {str(e)}"}
             
+            # 응답 생성 요청 
+            try:
+                run = client.beta.threads.runs.create(
+                    thread_id=thread_id,
+                    assistant_id=self.assistant_id
+                )
+                
+                # 완료 대기
+                while True:
+                    run_status = client.beta.threads.runs.retrieve(
+                        thread_id=thread_id,
+                        run_id=run.id
+                    )
+                    if run_status.status == 'completed':
+                        break
+                    elif run_status.status in ['failed', 'cancelled', 'expired']:
+                        return {"type": "ERROR", "message": f"응답 생성 실패: {run_status.status}"}
+                    time.sleep(1)
+                
+                # 응답 메시지 가져오기
+                messages = client.beta.threads.messages.list(
+                    thread_id=thread_id
+                )
+                
+                # 첫 번째 메시지(최신) 가져오기
+                response_message = messages.data[0].content[0].text.value
+                
+                # JSON 응답 파싱
+                try:
+                    json_start = response_message.find('{')
+                    json_end = response_message.rfind('}') + 1
+                    
+                    if json_start != -1 and json_end != -1:
+                        json_text = response_message[json_start:json_end]
+                        try:
+                            quiz_data = json.loads(json_text)
+                            print("JSON 파싱 성공")
+                            
+                            # 스레드 ID 추가
+                            quiz_data['thread_id'] = thread_id
+                            
+                            # JSON 파싱 성공 후 퀴즈 정보 저장
+                            if 'questions' in quiz_data and quiz_data['questions']:
+                                # 여러 문제가 있는 경우
+                                current_quiz_store[thread_id] = {
+                                    'questions': quiz_data['questions'],
+                                    'current_index': 0,
+                                    'quiz': quiz_data['questions'][0],
+                                    'progress': {
+                                        'current': 1,
+                                        'total': len(quiz_data['questions'])
+                                    }
+                                }
+                            elif 'quiz' in quiz_data:
+                                # 단일 문제인 경우
+                                current_quiz_store[thread_id] = {
+                                    'quiz': quiz_data['quiz'],
+                                    'progress': {
+                                        'current': 1,
+                                        'total': 1
+                                    }
+                                }
+                            else:
+                                print("퀴즈 데이터에 'questions' 또는 'quiz' 필드가 없습니다.")
+                            
+                            return quiz_data
+                        except json.JSONDecodeError as e:
+                            print(f"JSON 파싱 오류: {str(e)}")
+                            print(f"JSON 텍스트: {json_text}")
+                            return {"type": "ERROR", "message": "퀴즈 데이터 형식이 유효하지 않습니다."}
+                    else:
+                        print(f"JSON 형식을 찾을 수 없습니다. 응답: {response_message}")
+                        # JSON이 아닌 일반 텍스트 응답
+                        return {
+                            "type": "CHAT",
+                            "message": response_message,
+                            "thread_id": thread_id
+                        }
+                except Exception as e:
+                    print(f"응답 처리 오류: {str(e)}")
+                    return {"type": "ERROR", "message": f"응답 처리 오류: {str(e)}"}
+                
+            except Exception as e:
+                print(f"Error in run creation or retrieval: {str(e)}")
+                return {"type": "ERROR", "message": f"응답 생성 오류: {str(e)}"}
+        
         except Exception as e:
-            print(f"Error getting quiz: {str(e)}")
-            return {
-                'type': 'ERROR',
-                'message': '퀴즈를 가져오는 중 오류가 발생했습니다.'
-            }
+            print(f"Error in get_quiz: {str(e)}")
+            traceback.print_exc()
+            return {"type": "ERROR", "message": f"퀴즈 생성 중 오류가 발생했습니다: {str(e)}"}
 
     def check_answer(self, message, thread_id):
+        logger.info(f"답변 평가 요청: thread_id={thread_id}, 답변={message}")
         try:
-            client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content=message
-            )
+            # 현재 퀴즈 정보 가져오기
+            if thread_id not in current_quiz_store:
+                print(f"thread_id {thread_id}에 대한 퀴즈 정보가 없습니다.")
+                print(f"현재 저장된 쓰레드 IDs: {list(current_quiz_store.keys())}")
+                return {"type": "ERROR", "message": "퀴즈 정보를 찾을 수 없습니다. 새로운 문제를 먼저 요청해주세요."}
             
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=self.assistant_id
-            )
+            current_quiz = current_quiz_store.get(thread_id)
             
-            while True:
-                run_status = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
-                if run_status.status == 'completed':
-                    break
-                time.sleep(1)
+            # 퀴즈 정보 추출
+            quiz = current_quiz.get('quiz', {})
+            question = quiz.get('question', '')
+            correct_answer = quiz.get('correct', '')
+            question_type = quiz.get('question_type', '객관식')
             
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            response_text = messages.data[0].content[0].text.value
+            # 로그 출력
+            print(f"현재 쓰레드: {thread_id}")
+            print(f"사용자 답변: {message}")
+            print(f"정답: {correct_answer}")
+            print(f"문제 유형: {question_type}")
+            print(f"문제: {question}")
             
-            if response_text.startswith('```'):
-                response_text = response_text.split('```')[1]
-                if response_text.startswith('json'):
-                    response_text = response_text[4:].strip()
+            # 답변 평가 요청 프롬프트 구성
+            prompt = f"""
+            다음은 방금 출제한 {question_type} 문제와 사용자의 답변입니다:
+
+            문제: {question}
+            정답: {correct_answer}
+            사용자 답변: {message}
+
+            사용자 답변이 정답인지 평가하고, 아래 JSON 형식으로 응답해주세요:
+            {{
+                "type": "ANSWER",
+                "answer": {{
+                    "correct": true/false,
+                    "explanation": "정답/오답에 대한 설명", 
+                    "correct_answer": "정답" // 오답인 경우에만 제공
+                }}
+            }}
+            """
             
-            print(f"Cleaned response text: {response_text}")
+            print("=== 평가 프롬프트 ===")
+            print(prompt)
+            print("=====================")
             
             try:
-                response = json.loads(response_text)
+                # 메시지 추가
+                client.beta.threads.messages.create(
+                    thread_id=thread_id,
+                    role="user",
+                    content=prompt
+                )
                 
-                # 응답 타입에 따른 처리
-                if response.get('type') == 'ANSWER':
-                    # 답변 저장 로직은 chat 라우트에서 처리하므로 여기서는 제거
-                    return response
+                # 실행 요청
+                run = client.beta.threads.runs.create(
+                    thread_id=thread_id,
+                    assistant_id=self.assistant_id
+                )
                 
-                # QUIZ 타입 응답 처리
-                elif response.get('type') == 'QUIZ':
-                    current_quiz_store[thread_id] = response.get('quiz')
-                    return response
+                # 완료 대기
+                print("GPT 응답 대기 중...")
+                timeout_seconds = 30
+                start_time = time.time()
                 
-                # CHAT 타입을 ANSWER 형식으로 변환
-                elif response.get('type') == 'CHAT':
-                    return {
-                        'type': 'ANSWER',
-                        'answer': {
-                            'correct': None,
-                            'explanation': response.get('message', '')
-                        }
-                    }
-                else:
-                    raise ValueError("Invalid response format")
+                while True:
+                    # 타임아웃 체크
+                    if time.time() - start_time > timeout_seconds:
+                        print("GPT 응답 타임아웃")
+                        raise TimeoutError("GPT 응답 시간 초과")
+                    
+                    run_status = client.beta.threads.runs.retrieve(
+                        thread_id=thread_id,
+                        run_id=run.id
+                    )
+                    
+                    print(f"Run 상태: {run_status.status}")
+                    
+                    if run_status.status == 'completed':
+                        break
+                    elif run_status.status in ['failed', 'cancelled', 'expired']:
+                        raise Exception(f"응답 생성 실패: {run_status.status}")
+                    
+                    time.sleep(1)
                 
-            except json.JSONDecodeError as e:
-                return {
-                    'type': 'ANSWER',
-                    'answer': {
-                        'correct': None,
-                        'explanation': response_text
+                # 응답 가져오기
+                messages = client.beta.threads.messages.list(
+                    thread_id=thread_id
+                )
+                
+                # 응답 내용 추출
+                response_message = messages.data[0].content[0].text.value
+                print("GPT 응답:", response_message)
+                
+                # JSON 응답 파싱
+                try:
+                    # JSON 부분 추출
+                    json_start = response_message.find('{')
+                    json_end = response_message.rfind('}') + 1
+                    
+                    if json_start != -1 and json_end != -1:
+                        json_text = response_message[json_start:json_end]
+                        print("추출된 JSON:", json_text)
+                        
+                        result = json.loads(json_text)
+                        
+                        # 필수 필드 확인 및 추가
+                        if "type" not in result:
+                            result["type"] = "ANSWER"
+                        
+                        # 다음 문제 처리
+                        self._add_next_question_if_available(thread_id, current_quiz, result)
+                        return result
+                    else:
+                        print("JSON 형식을 찾을 수 없음, 전체 응답:", response_message)
+                        # JSON이 없는 경우 기본 응답 생성
+                        raise ValueError("유효한 JSON 응답을 찾을 수 없습니다")
+                except (json.JSONDecodeError, ValueError) as e:
+                    print(f"JSON 파싱 오류: {str(e)}")
+                    # 오류 발생 시 기본 평가 방식 사용
+                    result = self._create_default_answer_response(message, quiz)
+                    # 다음 문제 처리
+                    self._add_next_question_if_available(thread_id, current_quiz, result)
+                    return result
+                
+            except Exception as e:
+                print(f"GPT 답변 평가 오류: {str(e)}")
+                # 오류 발생 시 기본 평가 방식 사용
+                result = self._create_default_answer_response(message, quiz)
+                # 다음 문제 처리
+                self._add_next_question_if_available(thread_id, current_quiz, result)
+                return result
+            
+        except Exception as e:
+            print(f"check_answer 메서드 오류: {str(e)}")
+            traceback.print_exc()
+            return {"type": "ERROR", "message": f"답변 확인 중 오류가 발생했습니다: {str(e)}"}
+
+    def _create_default_answer_response(self, message, quiz):
+        """GPT 평가 실패 시 기본 문자열 비교로 답변 평가"""
+        correct_answer = quiz.get('correct', '')
+        explanation = quiz.get('explanation', '')
+        question_type = quiz.get('question_type', '객관식')
+        
+        # 객관식
+        if question_type == '객관식':
+            pattern = r'^[①-⑤]\s*'
+            user_answer_stripped = re.sub(pattern, '', message.strip())
+            correct_stripped = re.sub(pattern, '', correct_answer.strip())
+            
+            # 번호로 답변한 경우
+            if re.match(r'^[①-⑤]$', message.strip()):
+                is_correct = message.strip() == correct_answer[0]
+            # 내용으로 답변한 경우
+            elif user_answer_stripped and correct_stripped:
+                is_correct = user_answer_stripped.lower() == correct_stripped.lower()
+            else:
+                is_correct = message.strip().lower() == correct_answer.strip().lower()
+        else:
+            # 단답형/빈칸채우기는 단순 문자열 비교
+            is_correct = message.strip().lower() == correct_answer.strip().lower()
+        
+        result = {
+            "type": "ANSWER",
+            "answer": {
+                "correct": is_correct,
+                "explanation": explanation
+            }
+        }
+        
+        # 오답인 경우 정답 추가
+        if not is_correct:
+            result["answer"]["correct_answer"] = correct_answer
+        
+        return result
+
+    def _add_next_question_if_available(self, thread_id, current_quiz, result):
+        """다음 문제가 있다면 결과에 추가"""
+        if 'questions' in current_quiz:
+            questions = current_quiz['questions']
+            current_index = current_quiz.get('current_index', 0)
+            
+            if current_index + 1 < len(questions):
+                next_index = current_index + 1
+                next_quiz = questions[next_index]
+                
+                # 다음 문제 정보 저장
+                current_quiz_store[thread_id] = {
+                    'questions': questions,
+                    'current_index': next_index,
+                    'quiz': next_quiz,
+                    'progress': {
+                        'current': next_index + 1,
+                        'total': len(questions)
                     }
                 }
-            
-        except Exception as e:
-            print(f"Error checking answer: {str(e)}")
-            return {
-                'type': 'ERROR',
-                'message': '답변 체크 중 오류가 발생했습니다.'
-            }
-
-    def get_chat_response(self, message, thread_id):
-        try:
-            client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content=message
-            )
-            
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=self.assistant_id
-            )
-            
-            while True:
-                run_status = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
-                if run_status.status == 'completed':
-                    break
-                time.sleep(1)
-            
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            response = messages.data[0].content[0].text.value
-            
-            return json.loads(response)
-            
-        except Exception as e:
-            print(f"Error getting chat response: {str(e)}")
-            return {
-                'type': 'ERROR',
-                'message': '응답 처리 중 오류가 발생했습니다.'
-            }
+                
+                # 다음 문제 정보 추가
+                result['next_question'] = {
+                    'quiz': next_quiz,
+                    'progress': {
+                        'current': next_index + 1,
+                        'total': len(questions)
+                    }
+                }
 
 # ScienceQuizBot 인스턴스 생성
 quiz_bot = ScienceQuizBot()
@@ -479,97 +627,27 @@ def chat():
         thread_id = data.get('thread_id')
         is_quiz_answer = data.get('is_quiz_answer', False)
         
-        # 새로운 필터링 파라미터 가져오기
+        # 필터링 파라미터 가져오기
         subject = data.get('subject')
         grade = data.get('grade')
         unit = data.get('unit')
+        question_types = data.get('question_types', ['객관식'])  # 기본값 설정
         
         print("=== 받은 메시지 ===")
-        print(message)
+        print(f"메시지: {message}")
         print(f"Thread ID: {thread_id}")
         print(f"Is Quiz Answer: {is_quiz_answer}")
         print(f"과목 필터: {subject}")
         print(f"학년 필터: {grade}")
         print(f"단원 필터: {unit}")
+        print(f"문제 유형 필터: {question_types}")
         
-        # 기존 호환성을 위한 변수들
-        main_unit = data.get('main_unit')
-        sub_unit = data.get('sub_unit')
-        
+        # 스레드 ID가 없는 경우 생성
         if not thread_id:
-            return jsonify({"error": "Thread ID is required"}), 400
-        
-        # 퀴즈 답변 처리
-        if is_quiz_answer:
-            # 현재 퀴즈 정보 가져오기
-            current_quiz = current_quiz_store.get(thread_id)
-            if not current_quiz:
-                return jsonify({"error": "Quiz not found"}), 404
-            
-            # 답변 체크
-            result = quiz_bot.check_answer(message, thread_id)
-            
-            if result.get('type') == 'ANSWER':
-                # 사용자 답변 저장
-                try:
-                    if isinstance(current_quiz, dict) and 'questions' in current_quiz:
-                        # 여러 문제 중 현재 문제
-                        current_index = current_quiz.get('current_index', 0)
-                        question = current_quiz['questions'][current_index]
-                        
-                        # 다음 문제 인덱스 계산
-                        next_index = current_index + 1
-                        has_next = next_index < len(current_quiz['questions'])
-                        
-                        # 현재 문제 정보 저장
-                        answer = Answer(
-                            user_id=current_user.id,
-                            main_unit=question.get('main_unit'),
-                            sub_unit=question.get('sub_unit'),
-                            unit=question.get('unit') or question.get('main_unit'),
-                            subject=question.get('subject'),
-                            grade=question.get('grade'),
-                            question=question.get('question'),
-                            user_answer=message,
-                            is_correct=result['answer'].get('correct', False)
-                        )
-                        db.session.add(answer)
-                        db.session.commit()
-                        
-                        # 다음 문제가 있는 경우
-                        if has_next:
-                            # 현재 인덱스 업데이트
-                            current_quiz['current_index'] = next_index
-                            next_question = current_quiz['questions'][next_index]
-                            
-                            # 다음 문제 정보 추가
-                            result['next_question'] = {
-                                'quiz': next_question,
-                                'progress': {
-                                    'current': next_index + 1,
-                                    'total': len(current_quiz['questions'])
-                                }
-                            }
-                    else:
-                        # 단일 문제인 경우
-                        answer = Answer(
-                            user_id=current_user.id,
-                            main_unit=current_quiz.get('main_unit'),
-                            sub_unit=current_quiz.get('sub_unit'),
-                            unit=current_quiz.get('unit') or current_quiz.get('main_unit'),
-                            subject=current_quiz.get('subject'),
-                            grade=current_quiz.get('grade'),
-                            question=current_quiz.get('question'),
-                            user_answer=message,
-                            is_correct=result['answer'].get('correct', False)
-                        )
-                        db.session.add(answer)
-                        db.session.commit()
-                except Exception as e:
-                    print(f"Error saving answer: {str(e)}")
-                    db.session.rollback()
-                
-                return jsonify(result)
+            print("새 스레드 ID 생성")
+            thread = client.beta.threads.create()
+            thread_id = thread.id
+            print(f"생성된 Thread ID: {thread_id}")
         
         # 퀴즈 요청 패턴 확인
         quiz_request_pattern = r'(\d+)문제\s*(출제|내줘|주세요|풀고싶어요|풀래요|풀어볼래요)'
@@ -578,184 +656,80 @@ def chat():
         if match:
             question_count = int(match.group(1))
             print(f"=== 요청된 문제 수: {question_count} ===")
-            print(f"=== {message} 시작 ===")
-            print(f"과목 필터: {subject}")
-            print(f"학년 필터: {grade}")
-            print(f"단원 필터: {unit}")
             
-            # 프롬프트 구성
-            prompt = ""
-            if subject and grade and unit:
-                prompt = f"{subject} {grade} {unit} 단원 관련 문제를 {question_count}개 출제해주세요."
-            elif subject and grade:
-                prompt = f"{subject} {grade} 학년 관련 문제를 {question_count}개 출제해주세요."
-            elif subject:
-                prompt = f"{subject} 과목 관련 문제를 {question_count}개 출제해주세요."
-            else:
-                prompt = f"초등학교와 중학교 교육 관련 문제를 {question_count}개 출제해주세요."
+            # 이미 요청에 필터가 포함되어 있는지 확인하고 포함되어 있다면 사용
+            # 필터가 없는 경우에만 기본값 사용
+            if not subject and not grade and not unit and not question_types:
+                print("필터가 없는 요청입니다. 기본값을 사용합니다.")
             
-            prompt += """
-
-반드시 다음 JSON 형식을 정확히 따라야 합니다:
-
-{
-  "type": "QUIZ",
-  "questions": [
-    {
-      "subject": "과목명",
-      "grade": "학년",
-      "unit": "단원명",
-      "question": "문제 내용",
-      "options": ["① 보기1", "② 보기2", "③ 보기3", "④ 보기4", "⑤ 보기5"],
-      "correct": "정답",
-      "type": "용어 정의",
-      "explanation": "해설"
-    }
-  ]
-}
-
-중요 규칙:
-1. questions 배열에 정확히 """ + str(question_count) + """개의 문제가 있어야 합니다.
-2. 각 문제는 반드시 subject, grade, unit, question, options, correct, type, explanation 필드를 모두 포함해야 합니다.
-3. options 배열은 정확히 5개의 보기를 포함해야 합니다.
-4. correct는 반드시 options 배열의 요소 중 하나와 정확히 일치해야 합니다.
-5. 단원 정보는 반드시 정확하게 입력해야 합니다.
-"""
-            
-            print("=== 전송하는 프롬프트 ===")
-            print(prompt)
-            print("========================")
-            
-            # OpenAI API 호출
-            client.beta.threads.messages.create(
+            # 퀴즈 생성 호출시 문제 유형 전달
+            result = quiz_bot.get_quiz(
                 thread_id=thread_id,
-                role="user",
-                content=prompt
+                question_count=question_count,
+                main_unit=subject,
+                sub_unit=grade,
+                question_types=question_types
             )
             
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=quiz_bot.assistant_id
-            )
+            # 스레드 ID 확인 및 업데이트
+            if result and 'thread_id' in result:
+                thread_id = result['thread_id']
             
-            while True:
-                run_status = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
-                if run_status.status == 'completed':
-                    break
-                time.sleep(1)
-            
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            response_text = messages.data[0].content[0].text.value
-            
-            # 마크다운 코드 블록 제거
-            if response_text.startswith('```'):
-                response_text = response_text.split('```')[1]
-                if response_text.startswith('json'):
-                    response_text = response_text[4:].strip()
-            
-            print(f"Cleaned response text: {response_text}")
-            
-            try:
-                response = json.loads(response_text)
-                if response.get('type') == 'QUIZ' and 'questions' in response:
-                    questions = response['questions']
-                    
-                    if len(questions) != question_count:
-                        print(f"Expected {question_count} questions but got {len(questions)}")
-                        # 오류 응답
-                        return jsonify({
-                            'type': 'ERROR',
-                            'message': '문제 생성 중 오류가 발생했습니다.'
-                        }), 500
-                    
-                    if question_count > 1:
-                        # 첫 번째 문제 반환
-                        first_question = questions[0]
-                        current_quiz_store[thread_id] = {
-                            'questions': questions,
-                            'current_index': 0,
-                            'total_questions': question_count
+            # 퀴즈 생성 결과에서 데이터 추출
+            if result.get('type') == 'QUIZ':
+                # 퀴즈 데이터가 있는 경우, 저장
+                if 'questions' in result and result['questions']:
+                    current_quiz_store[thread_id] = {
+                        'questions': result['questions'],
+                        'current_index': 0,
+                        'quiz': result['questions'][0],
+                        'progress': {
+                            'current': 1,
+                            'total': len(result['questions'])
                         }
-                        return jsonify({
-                            'type': 'QUIZ',
-                            'quiz': first_question,
-                            'progress': {
-                                'current': 1,
-                                'total': question_count
-                            }
-                        })
-                    
-                    # 단일 문제인 경우
-                    current_quiz_store[thread_id] = questions[0]
-                    return jsonify({
-                        'type': 'QUIZ',
-                        'quiz': questions[0],
+                    }
+                    print(f"쓰레드 {thread_id}에 대한 퀴즈 정보 저장 완료 (여러 문제)")
+                elif 'quiz' in result:
+                    current_quiz_store[thread_id] = {
+                        'quiz': result['quiz'],
                         'progress': {
                             'current': 1,
                             'total': 1
                         }
-                    })
-                else:
-                    # 형식이 맞지 않는 경우
-                    return jsonify({
-                        'type': 'ERROR',
-                        'message': '문제 생성 중 오류가 발생했습니다.'
-                    }), 500
-            except json.JSONDecodeError as e:
-                print(f"JSON decode error: {e}")
-                return jsonify({
-                    'type': 'ERROR',
-                    'message': '문제 생성 중 오류가 발생했습니다.'
-                }), 500
+                    }
+                    print(f"쓰레드 {thread_id}에 대한 퀴즈 정보 저장 완료 (단일 문제)")
+            
+            return jsonify(result)
+            
+        elif is_quiz_answer:
+            # 현재 퀴즈 정보 로깅
+            print("=== 답변 평가 요청 ===")
+            if thread_id in current_quiz_store:
+                current_quiz = current_quiz_store[thread_id]
+                quiz = current_quiz.get('quiz', {})
+                print(f"현재 문제: {quiz.get('question', '정보 없음')}")
+                print(f"정답: {quiz.get('correct', '정보 없음')}")
+                print(f"문제 유형: {quiz.get('question_type', '정보 없음')}")
+            else:
+                print(f"thread_id {thread_id}에 대한 퀴즈 정보가 없습니다.")
+                print(f"현재 저장된 쓰레드 IDs: {list(current_quiz_store.keys())}")
+            
+            # 답변 체크
+            result = quiz_bot.check_answer(message, thread_id)
+            
+            print("=== 답변 평가 결과 반환 ===")
+            print(result)
+            return jsonify(result)
+            
         else:
-            # 일반 대화 처리
-            client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content=message
-            )
+            # 일반 대화
+            result = quiz_bot.get_chat_response(message, thread_id)
+            return jsonify(result)
             
-            run = client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=quiz_bot.assistant_id
-            )
-            
-            while True:
-                run_status = client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
-                    run_id=run.id
-                )
-                if run_status.status == 'completed':
-                    break
-                time.sleep(1)
-            
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
-            response_text = messages.data[0].content[0].text.value
-            
-            # 마크다운 코드 블록 제거
-            if response_text.startswith('```'):
-                response_text = response_text.split('```')[1]
-                if response_text.startswith('json'):
-                    response_text = response_text[4:].strip()
-            
-            try:
-                response = json.loads(response_text)
-                return jsonify(response)
-            except json.JSONDecodeError:
-                # JSON이 아닌 경우 일반 텍스트 응답
-                return jsonify({
-                    'type': 'CHAT',
-                    'message': response_text
-                })
     except Exception as e:
-        print(f"Error in chat: {str(e)}")
-        return jsonify({
-            'type': 'ERROR',
-            'message': '메시지 처리 중 오류가 발생했습니다.'
-        }), 500
+        print(f"Error in chat API: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"type": "ERROR", "message": f"오류가 발생했습니다: {str(e)}"})
 
 @app.route('/admin')
 @login_required
@@ -990,7 +964,6 @@ def admin_dashboard():
                              
     except Exception as e:
         print(f"Error in admin_dashboard: {str(e)}")
-        import traceback
         traceback.print_exc()  # 상세 오류 정보 출력
         flash('대시보드 로딩 중 오류가 발생했습니다.', 'error')
         return redirect(url_for('login'))
@@ -1440,7 +1413,6 @@ def download_statistics():
         
     except Exception as e:
         print(f"통계 다운로드 오류: {e}")
-        import traceback
         traceback.print_exc()
         flash('통계 다운로드 중 오류가 발생했습니다.', 'error')
         return redirect(url_for('admin_dashboard'))
